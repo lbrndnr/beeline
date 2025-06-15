@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-use crate::{dfa::Action, h2::types::rodata};
+use crate::{bpf::TryIntoRawOctets, dfa::Action, h2::types::rodata};
 use anyhow::Result;
 use dfa::H2Dfa;
 use libbpf_rs::{
@@ -92,8 +92,8 @@ impl<'obj> Parser<'obj> {
 
         inject_dfa(dfa, &mut open_skel)?;
 
-        // open_skel.maps.rodata_data.ip4 = address.try_into_ne_octets()?;
-        // open_skel.maps.rodata_data.port = address.port() as u32;
+        open_skel.maps.rodata_data.as_mut().unwrap().ip4 = address.try_into_ne_octets()?;
+        open_skel.maps.rodata_data.as_mut().unwrap().port = address.port() as u32;
 
         let skel = open_skel.load()?;
 
@@ -106,7 +106,6 @@ impl<'obj> Parser<'obj> {
             .into_raw_fd();
 
         let sockops = skel.progs.monitor_sockets.attach_cgroup(cgroup_fd)?;
-
         skel.progs.msg_verdict.attach_sockmap(sock_map_fd)?;
 
         Ok(Self { sockops, skel })

@@ -305,12 +305,7 @@ int monitor_sockets(struct bpf_sock_ops *ops) {
 
         bpf_log("Established socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
 
-        enum pr_sock_action *remote = bpf_map_lookup_elem(&sock_wait_list, &skey.remote);
-        enum pr_sock_action *local = bpf_map_lookup_elem(&sock_wait_list, &skey.local);
-        bool add_remote = (remote != NULL && (*remote == PR_ADD_REMOTE || *remote == PR_ADD_BOTH));
-        bool add_local = (local != NULL && (*local == PR_ADD_LOCAL || *local == PR_ADD_BOTH));
-
-        if (add_remote || add_local) {
+        if (skey.local.ip4 == ip4 && skey.local.port == port) {
             if (bpf_sock_hash_update(ops, &sock_map, &skey, BPF_ANY) < 0) {
                 bpf_err("ERROR: Failed to add socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
                 return SK_PASS;
