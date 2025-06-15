@@ -4,14 +4,15 @@ use axum::{
     body::Bytes,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::post,
+    routing::get,
 };
 use beeline::h2::Parser;
+use reqwest::Client;
 use std::{
+    fmt::Debug,
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
 };
-use tokio::net::TcpStream;
 
 const ECHO_ADDR: &str = "127.0.0.1:3000";
 
@@ -35,23 +36,28 @@ async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, Stat
     }
 }
 
-async fn start_echo<'obj, A: tokio::net::ToSocketAddrs + std::net::ToSocketAddrs + Clone>(
+async fn start_echo<
+    'obj,
+    A: tokio::net::ToSocketAddrs + std::net::ToSocketAddrs + Clone + Debug,
+>(
     addr: A,
     open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
 ) -> Result<()> {
     let parser = Parser::attach(addr.clone(), open_obj);
 
-    // build our application with a route
+    // build our /application with a route
     let app = Router::new().route(
         "/",
-        post(move |req_hdrs: HeaderMap, body: Bytes| {
+        get(move |req_hdrs: HeaderMap, body: Bytes| {
             let res_hdrs = HeaderMap::new();
             echo(res_hdrs, body)
         }),
     );
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr.clone()).await.unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
 
     Ok(())
 }
@@ -74,7 +80,22 @@ unsafe impl Send for OpenObject {}
 
 #[tokio::test]
 async fn it_connects() {
+    _ = env_logger::try_init();
+
     let mut open_obj = OpenObject::new();
-    let server = start_echo(ECHO_ADDR, &mut open_obj);
-    let mut client = TcpStream::connect(ECHO_ADDR).await.unwrap();
+    let server = start_echo(ECHO_ADDR, &mut open_obj).await;
+
+    let client = Client::builder()
+        .connection_verbose(true)
+        .http2_prior_knowledge()
+        .build()
+        .expect("client");
+    let resp = client
+        .get("http://127.0.0.1:3000")
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    drop(server);
 }
