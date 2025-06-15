@@ -1,51 +1,15 @@
 #include "vmlinux.h"
+#include "beeline.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
 char LICENSE[] SEC("license") = "GPL";
 
-#ifndef bpf_clamp_uminmax
-#define bpf_clamp_uminmax(VAR, UMIN, UMAX)                                                         \
-    asm volatile("if %0 >= %[min] goto +2\n"                                                       \
-                 "%0 = %[min]\n"                                                                   \
-                 "goto +2\n"                                                                       \
-                 "if %0 <= %[max] goto +1\n"                                                       \
-                 "%0 = %[max]\n"                                                                   \
-                 : "+r"(VAR)                                                                       \
-                 : [min] "i"(UMIN), [max] "i"(UMAX))
-#endif
-
-#ifdef LOG_LEVEL
-    #if LOG_LEVEL == 0
-        #define bpf_log(...) (0)
-        #define bpf_err(...) (0)
-    #elif LOG_LEVEL == 1
-        #define bpf_log(...) (0)
-        #define bpf_err(...) bpf_printk(__VA_ARGS__)
-    #elif LOG_LEVEL == 2
-        #define bpf_log(...) bpf_printk(__VA_ARGS__)
-        #define bpf_err(...) bpf_printk(__VA_ARGS__)
-    #endif
-#else
-    #define bpf_log(...) (0)
-    #define bpf_err(...) (0)
-#endif
-
 // these restrictions are needed to make the verifier happy
 #define MAX_BYTES 0xFFFE
 #define MAX_MATCHES 16
 #define MAX_MATCH_MASK 15
-
-struct addr_key {
-    u32 ip4;
-    u32 port;
-};
-
-struct sock_key {
-    struct addr_key local;
-    struct addr_key remote;
-};
 
 struct prange {
     u16 idx;
@@ -58,13 +22,6 @@ struct {
     __type(key, struct sock_key);
     __type(value, int);
 } sock_map SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 16384);
-    __type(key, struct addr_key);
-    __type(value, enum pr_sock_action);
-} sock_wait_list SEC(".maps");
 
 const u32 a_mask = 0xFFFF0000;
 const u16 a_match = 1 << 15;
@@ -86,22 +43,6 @@ const u16 s_any = 1;
 volatile const u32 ip4;
 volatile const u32 port;
 volatile const u32 s2ts[128][256];
-const u32 percpu_key = 0;
-
-enum pr_action {
-    PR_DROP=0,
-    PR_PASS,
-    PR_UTRN
-};
-
-enum pr_sock_action {
-    PR_ADD_LOCAL=0,
-    PR_ADD_REMOTE,
-    PR_ADD_BOTH,
-};
-
-// ----------------------------------------------
-// plugin helpers
 
 static __always_inline int _modify(struct sk_msg_md *msg, struct prange r, char *str, u16 str_len) {
     u16 len = r.len;
@@ -273,7 +214,7 @@ int msg_verdict(struct sk_msg_md *msg) {
     bool is_downstream = (ikey.remote.ip4 == ip4 && ikey.remote.port == port);
     bpf_log("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
 
-    enum pr_action res = PR_PASS;
+    enum sk_action res = SK_PASS;
     struct prange pranges[MAX_MATCHES] = { 0 };
     bool pmatches[MAX_MATCHES] = { 0 };
 
@@ -305,7 +246,7 @@ int monitor_sockets(struct bpf_sock_ops *ops) {
 
         bpf_log("Established socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
 
-        if (skey.local.ip4 == ip4 && skey.local.port == port) {
+        if (skey.remote.ip4 == ip4 && skey.remote.port == port) {
             if (bpf_sock_hash_update(ops, &sock_map, &skey, BPF_ANY) < 0) {
                 bpf_err("ERROR: Failed to add socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
                 return SK_PASS;

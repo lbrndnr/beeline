@@ -89,6 +89,7 @@ impl<'obj> Parser<'obj> {
         // TODO: configure the parser according to the config
         let rodata = open_skel.maps.rodata_data.as_ref().unwrap();
         let mut dfa = H2Dfa::new(rodata.s_init, rodata.s_any);
+        dfa.match_preface()?;
 
         inject_dfa(dfa, &mut open_skel)?;
 
@@ -107,6 +108,8 @@ impl<'obj> Parser<'obj> {
 
         let sockops = skel.progs.monitor_sockets.attach_cgroup(cgroup_fd)?;
         skel.progs.msg_verdict.attach_sockmap(sock_map_fd)?;
+
+        debug!("eBPF http/2 attached");
 
         Ok(Self { sockops, skel })
     }

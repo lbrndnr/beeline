@@ -74,7 +74,7 @@ async fn it_connects() {
 
     let mut open_obj = OpenObject::new();
     let server = start_echo(ECHO_ADDR).await;
-    let parser = Parser::attach(ECHO_ADDR, &mut open_obj);
+    let parser = Parser::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
     let client = Client::builder()
         .connection_verbose(true)

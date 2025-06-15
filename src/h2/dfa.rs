@@ -22,6 +22,19 @@ impl H2Dfa {
         }
     }
 
+    pub fn match_preface(&mut self) -> Result<()> {
+        self.dfa
+            .start_pattern(self.s_init)
+            .push("PRI * HTTP/2.0")?
+            .push(CRLF)?
+            .push(CRLF)?
+            .push("SM")?
+            .push(CRLF)?
+            .done_on(CRLF)?;
+
+        Ok(())
+    }
+
     pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
         self.dfa.iter_states()
     }
