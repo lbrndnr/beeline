@@ -25,10 +25,11 @@ impl H2Dfa {
     pub fn match_preface(&mut self) -> Result<()> {
         self.dfa
             .start_pattern(self.s_init)
+            .start_capturing()
             .push("PRI * HTTP/2.0")?
             .push(CRLF)?
             .push(CRLF)?
-            .push("SM")?
+            .end_capturing("SM")?
             .push(CRLF)?
             .done_on(CRLF)?;
 

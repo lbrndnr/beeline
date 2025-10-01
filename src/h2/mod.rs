@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-use crate::{bpf::TryIntoRawOctets, dfa::Action, h2::types::rodata};
+use crate::{bpf::TryIntoRawOctets, dfa::Action, h2::types::*};
 use anyhow::Result;
 use dfa::H2Dfa;
 use libbpf_rs::{
@@ -33,26 +33,26 @@ fn print(level: PrintLevel, msg: String) {
         PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
     }
 }
-
-fn state_action_to_raw(state: u16, action: Action, rodata: &rodata) -> u32 {
+fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {
         Action::StartCapture(mid) => rodata.a_start_capture | (mid as u16) & rodata.a_id_mask,
         Action::EndCapture(cid, mid) => {
             let id = (cid as u16) << 6 | (mid as u16);
             rodata.a_end_capture | id & rodata.a_id_mask
         }
-        Action::Match(fid) => rodata.a_match | (fid as u16) & rodata.a_id_mask,
         Action::Done => rodata.a_done,
         Action::None => 0,
     };
 
-    ((action as u32) << 16) | (state as u32)
+    trans { state, action }
 }
 
 fn inject_dfa(dfa: H2Dfa, skel: &mut OpenParserSkel) -> Result<()> {
     for (from, to, input, action) in dfa.iter_transitions() {
-        let val = state_action_to_raw(*to, *action, skel.maps.rodata_data.as_ref().unwrap());
-        skel.maps.rodata_data.as_mut().unwrap().s2ts[*from as usize][*input as usize] = val;
+        let s = *from as usize;
+        let data = skel.maps.rodata_data.as_mut().unwrap();
+        let t = new_transition(*to, *action, data);
+        data.s2ts[s][*input as usize] = t;
     }
 
     Ok(())
@@ -86,7 +86,6 @@ impl<'obj> Parser<'obj> {
             open_skel.progs.msg_verdict.set_log_level(1);
         }
 
-        // TODO: configure the parser according to the config
         let rodata = open_skel.maps.rodata_data.as_ref().unwrap();
         let mut dfa = H2Dfa::new(rodata.s_init, rodata.s_any);
         dfa.match_preface()?;

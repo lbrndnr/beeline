@@ -14,11 +14,14 @@ fn main() {
         .join("h2")
         .join("parser.skel.rs");
 
-    let log_level = std::env::var("RUST_LOG").unwrap_or("error".to_string());
-    let log_level = if log_level.eq_ignore_ascii_case("debug") {
-        "2"
-    } else {
-        "1"
+    let log_level = std::env::var("RUST_LOG").map(|s| s.to_lowercase());
+    let log_level: u32 = match log_level.as_deref() {
+        Ok("debug") => 2,
+        Ok("trace") => 2,
+        Ok("info") => 1,
+        Ok("warn") => 1,
+        Ok("error") => 1,
+        _ => 0,
     };
     println!("cargo:rerun-if-env-changed=RUST_LOG");
 
