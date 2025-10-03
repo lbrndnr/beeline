@@ -88,7 +88,6 @@ impl<'obj> TestProgram<'obj> {
             open_skel.progs.msg_verdict.set_log_level(1);
         }
 
-        let rodata = open_skel.maps.rodata_data.as_ref().unwrap();
         inject_parser(parser, &mut open_skel)?;
 
         let ip4 = match address {
