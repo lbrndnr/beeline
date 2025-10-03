@@ -63,6 +63,8 @@ async fn it_connects() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
+    assert_eq!(prog.num_upgraded_conns().unwrap(), 1);
+
     drop(server);
     drop(prog);
 }

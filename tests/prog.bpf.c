@@ -18,6 +18,7 @@ struct {
     __type(key, struct sock_key);
     __type(value, int);
 } upgraded_conns SEC(".maps");
+u32 num_upgraded_conns = 0;
 
 struct {
     __uint(type, BPF_MAP_TYPE_SOCKHASH);
@@ -67,6 +68,7 @@ int msg_verdict(struct sk_msg_md *msg) {
         if (pranges[0].idx == 0 && pranges[0].len == 19) {
             int flag = 1;
             bpf_map_update_elem(&upgraded_conns, &ikey, &flag, BPF_ANY);
+            num_upgraded_conns += 1;
         }
     }
 
@@ -103,4 +105,9 @@ int monitor_sockets(struct bpf_sock_ops *ops) {
     }
 
     return SK_PASS;
+}
+
+SEC("syscall")
+int get_num_upgraded_conns() {
+    return num_upgraded_conns;
 }

@@ -119,6 +119,13 @@ impl<'obj> TestProgram<'obj> {
 
         Ok(Self { sockops, skel })
     }
+
+    pub fn num_upgraded_conns(&self) -> Result<u32> {
+        let func = &self.skel.progs.get_num_upgraded_conns;
+        let input = libbpf_rs::ProgramInput::default();
+
+        Ok(func.test_run(input)?.return_value)
+    }
 }
 
 pub struct OpenObject {
