@@ -11,14 +11,14 @@
                  : [min] "i"(UMIN), [max] "i"(UMAX))
 #endif
 
-#ifdef LOG_LEVEL
-    #if LOG_LEVEL == 0
+#ifdef BL_LOG_LEVEL
+    #if BL_LOG_LEVEL == 0
         #define bpf_log(...) (0)
         #define bpf_err(...) (0)
-    #elif LOG_LEVEL == 1
+    #elif BL_LOG_LEVEL == 1
         #define bpf_log(...) (0)
         #define bpf_err(...) bpf_printk(__VA_ARGS__)
-    #elif LOG_LEVEL == 2
+    #elif BL_LOG_LEVEL == 2
         #define bpf_log(...) bpf_printk(__VA_ARGS__)
         #define bpf_err(...) bpf_printk(__VA_ARGS__)
     #endif

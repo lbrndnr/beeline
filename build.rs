@@ -36,7 +36,9 @@ fn main() {
     file.write_all(beeline.as_bytes())
         .expect("Failed to write to src file");
 
-    let log_level = std::env::var("RUST_LOG").map(|s| s.to_lowercase());
+    let log_level = std::env::var("BL_LOG")
+        .or(std::env::var("RUST_LOG"))
+        .map(|s| s.to_lowercase());
     let log_level: u32 = match log_level.as_deref() {
         Ok("debug") => 2,
         Ok("trace") => 2,
@@ -53,7 +55,7 @@ fn main() {
         .source(src)
         .clang_args([
             OsStr::new("-D"),
-            OsStr::new(format!("LOG_LEVEL={log_level}").as_str()),
+            OsStr::new(format!("BL_LOG_LEVEL={log_level}").as_str()),
             OsStr::new("-I"),
             OsStr::new("include"),
         ])
