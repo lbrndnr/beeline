@@ -1,38 +1,29 @@
 #![allow(unused_imports)]
 
-use crate::{bpf::TryIntoRawOctets, dfa::Action, h2::types::*};
 use anyhow::Result;
-use dfa::H2Dfa;
+use beeline::{dfa::Action, h2::Parser};
 use libbpf_rs::{
     Link, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
 use log::{debug, info, log_enabled, warn};
 use std::{
+    io::{Error, ErrorKind},
     mem::MaybeUninit,
-    net::ToSocketAddrs,
+    net::{SocketAddr, ToSocketAddrs},
+    ops::{Deref, DerefMut},
     os::{
         fd::{AsFd, AsRawFd, IntoRawFd},
         unix::fs::OpenOptionsExt,
     },
 };
-
-mod dfa;
+use types::*;
 
 include!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/src/h2/parser.skel.rs"
+    "/target/bpf/prog.skel.rs"
 ));
 
-fn print(level: PrintLevel, msg: String) {
-    let msg = msg.trim_start_matches("libbpf:").trim();
-
-    match level {
-        PrintLevel::Debug => debug!(target: "libbpf", "{}", msg),
-        PrintLevel::Info => info!(target: "libbpf", "{}", msg),
-        PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
-    }
-}
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {
         Action::StartCapture(mid) => rodata.a_start_capture | (mid as u16) & rodata.a_id_mask,
@@ -47,8 +38,8 @@ fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     trans { state, action }
 }
 
-fn inject_dfa(dfa: H2Dfa, skel: &mut OpenParserSkel) -> Result<()> {
-    for (from, to, input, action) in dfa.iter_transitions() {
+fn inject_parser(parser: &Parser, skel: &mut OpenProgSkel) -> Result<()> {
+    for (from, to, input, action) in parser.iter_transitions() {
         let s = *from as usize;
         let data = skel.maps.rodata_data.as_mut().unwrap();
         let t = new_transition(*to, *action, data);
@@ -58,20 +49,31 @@ fn inject_dfa(dfa: H2Dfa, skel: &mut OpenParserSkel) -> Result<()> {
     Ok(())
 }
 
-pub struct Parser<'obj> {
-    skel: ParserSkel<'obj>,
+fn print(level: PrintLevel, msg: String) {
+    let msg = msg.trim_start_matches("libbpf:").trim();
+
+    match level {
+        PrintLevel::Debug => debug!(target: "libbpf", "{}", msg),
+        PrintLevel::Info => info!(target: "libbpf", "{}", msg),
+        PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
+    }
+}
+
+pub struct TestProgram<'obj> {
+    skel: ProgSkel<'obj>,
     #[allow(dead_code)]
     sockops: Link,
 }
 
-unsafe impl<'obj> Send for Parser<'obj> {}
+unsafe impl<'obj> Send for TestProgram<'obj> {}
 
-unsafe impl<'obj> Sync for Parser<'obj> {}
+unsafe impl<'obj> Sync for TestProgram<'obj> {}
 
-impl<'obj> Parser<'obj> {
+impl<'obj> TestProgram<'obj> {
     pub fn attach<A: ToSocketAddrs>(
         address: A,
         open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
+        parser: &Parser,
     ) -> Result<Self> {
         set_print(Some((PrintLevel::Debug, print)));
 
@@ -80,19 +82,24 @@ impl<'obj> Parser<'obj> {
             .next()
             .expect("Failed to parse address");
 
-        let skel_builder = ParserSkelBuilder::default();
+        let skel_builder = ProgSkelBuilder::default();
         let mut open_skel = skel_builder.open(open_obj)?;
         if log_enabled!(log::Level::Debug) {
             open_skel.progs.msg_verdict.set_log_level(1);
         }
 
         let rodata = open_skel.maps.rodata_data.as_ref().unwrap();
-        let mut dfa = H2Dfa::new(rodata.s_init, rodata.s_any);
-        dfa.match_preface()?;
+        inject_parser(parser, &mut open_skel)?;
 
-        inject_dfa(dfa, &mut open_skel)?;
+        let ip4 = match address {
+            SocketAddr::V4(addr) => Ok(u32::from_ne_bytes(addr.ip().octets())),
+            _ => Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Unsupported address family",
+            )),
+        }?;
 
-        open_skel.maps.rodata_data.as_mut().unwrap().ip4 = address.try_into_ne_octets()?;
+        open_skel.maps.rodata_data.as_mut().unwrap().ip4 = ip4;
         open_skel.maps.rodata_data.as_mut().unwrap().port = address.port() as u32;
 
         let skel = open_skel.load()?;
@@ -113,3 +120,31 @@ impl<'obj> Parser<'obj> {
         Ok(Self { sockops, skel })
     }
 }
+
+pub struct OpenObject {
+    inner: MaybeUninit<libbpf_rs::OpenObject>,
+}
+
+impl OpenObject {
+    pub fn new() -> Self {
+        Self {
+            inner: MaybeUninit::uninit(),
+        }
+    }
+}
+
+impl Deref for OpenObject {
+    type Target = MaybeUninit<libbpf_rs::OpenObject>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for OpenObject {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+unsafe impl Send for OpenObject {}

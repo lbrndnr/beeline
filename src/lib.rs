@@ -1,3 +1,2 @@
-mod bpf;
-mod dfa;
+pub mod dfa;
 pub mod h2;

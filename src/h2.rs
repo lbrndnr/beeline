@@ -3,7 +3,7 @@ use anyhow::{Ok, Result};
 
 const CRLF: &str = "\r\n";
 
-pub struct H2Dfa {
+pub struct Parser {
     pub s_init: u16,
     pub s_any: u16,
 
@@ -11,11 +11,11 @@ pub struct H2Dfa {
 }
 
 #[allow(dead_code)]
-impl H2Dfa {
-    pub fn new(s_init: u16, s_any: u16) -> H2Dfa {
+impl Parser {
+    pub fn new(s_init: u16, s_any: u16) -> Parser {
         let states = vec![s_init, s_any];
 
-        H2Dfa {
+        Parser {
             s_init,
             s_any,
             dfa: Dfa::new(states.into_iter()),
@@ -32,6 +32,23 @@ impl H2Dfa {
             .end_capturing("SM")?
             .push(CRLF)?
             .done_on(CRLF)?;
+
+        Ok(())
+    }
+
+    pub fn match_http_hdr(&mut self, key: &str) -> Result<()> {
+        self.dfa
+            .start_pattern(self.s_any)
+            .push(CRLF)?
+            .push(key)?
+            .push_optional('\t')?
+            .push_optional(' ')?
+            .push(":")?
+            .push_optional('\t')?
+            .push_optional(' ')?
+            .start_capturing()
+            .push_optional('*')?
+            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
         Ok(())
     }

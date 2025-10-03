@@ -8,24 +8,11 @@ use axum::{
 };
 use beeline::h2::Parser;
 use reqwest::Client;
-use std::{
-    mem::MaybeUninit,
-    ops::{Deref, DerefMut},
-};
+use utils::{OpenObject, TestProgram};
+
+mod utils;
 
 const ECHO_ADDR: &str = "127.0.0.1:3000";
-
-struct OpenObject {
-    inner: MaybeUninit<libbpf_rs::OpenObject>,
-}
-
-impl OpenObject {
-    pub fn new() -> Self {
-        Self {
-            inner: MaybeUninit::uninit(),
-        }
-    }
-}
 
 async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
     if let Ok(body) = String::from_utf8(body.to_vec()) {
@@ -52,29 +39,17 @@ async fn start_echo<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<()> {
     Ok(())
 }
 
-impl Deref for OpenObject {
-    type Target = MaybeUninit<libbpf_rs::OpenObject>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl DerefMut for OpenObject {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
-
-unsafe impl Send for OpenObject {}
-
 #[tokio::test]
 async fn it_connects() {
     _ = env_logger::try_init();
 
     let mut open_obj = OpenObject::new();
     let server = start_echo(ECHO_ADDR).await;
-    let parser = Parser::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+
+    let mut parser = Parser::new(0, 1);
+    parser.match_preface().expect("match_preface");
+
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj, &parser).expect("attach");
 
     let client = Client::builder()
         .connection_verbose(true)
@@ -89,5 +64,5 @@ async fn it_connects() {
 
     assert_eq!(resp.status(), 200);
     drop(server);
-    drop(parser);
+    drop(prog);
 }
