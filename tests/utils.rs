@@ -1,9 +1,10 @@
 #![allow(unused_imports)]
 
 use anyhow::Result;
-use beeline::{dfa::Action, h2::Parser};
+use as_bytes::AsBytes;
+use beeline::{h2::Parser, h2::dfa::Action};
 use libbpf_rs::{
-    Link, PrintLevel, set_print,
+    Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
 use log::{debug, info, log_enabled, warn};
@@ -26,11 +27,8 @@ include!(concat!(
 
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {
-        Action::StartCapture(mid) => rodata.a_start_capture | (mid as u16) & rodata.a_id_mask,
-        Action::EndCapture(cid, mid) => {
-            let id = (cid as u16) << 6 | (mid as u16);
-            rodata.a_end_capture | id & rodata.a_id_mask
-        }
+        Action::CaptureFieldValue(cid) => rodata.a_start_capture | (cid as u16) & rodata.a_id_mask,
+        // Action::EndCapturing(rid) => rodata.a_end_capture | (rid as u16) & rodata.a_id_mask,
         Action::Done => rodata.a_done,
         Action::None => 0,
     };
@@ -43,6 +41,10 @@ fn inject_parser(parser: &Parser, skel: &mut OpenProgSkel) -> Result<()> {
         let s = *from as usize;
         let data = skel.maps.rodata_data.as_mut().unwrap();
         let t = new_transition(*to, *action, data);
+        println!(
+            "Transition from state {} to state {} on input {} with action {:?}",
+            from, to, input, action
+        );
         data.s2ts[s][*input as usize] = t;
     }
 
@@ -124,6 +126,15 @@ impl<'obj> TestProgram<'obj> {
         let input = libbpf_rs::ProgramInput::default();
 
         Ok(func.test_run(input)?.return_value)
+    }
+
+    pub fn get_match(&self, idx: usize) -> Result<Option<Vec<u8>>> {
+        let id = self.skel.maps.matches.info()?.info.id;
+        let map = MapHandle::from_map_id(id)?;
+
+        let key = idx as u32;
+        let key = unsafe { key.as_bytes() };
+        Ok(map.lookup(&key, MapFlags::empty())?)
     }
 }
 

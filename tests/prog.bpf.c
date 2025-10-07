@@ -1,4 +1,6 @@
 #include "beeline.h"
+#include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -30,6 +32,15 @@ struct {
 volatile const u32 ip4;
 volatile const u32 port;
 
+struct hdr_match ms[MAX_MATCHES] = { 0 };
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_MATCHES);
+    __type(key, u32);
+    __type(value, char[128]);
+} matches SEC(".maps");
+
 SEC("sk_msg")
 int msg_verdict(struct sk_msg_md *msg) {
     // socket identifeir of the ingress connection
@@ -47,29 +58,45 @@ int msg_verdict(struct sk_msg_md *msg) {
     bool is_downstream = (ikey.remote.ip4 == ip4 && ikey.remote.port == port);
     bpf_printk("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
 
-    enum sk_action res = SK_PASS;
-    struct prange pranges[MAX_MATCHES] = { 0 };
-
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
     if (is_h2) {
-        int done_idx = parse_h2(msg, pranges);
-        if (done_idx < 0) {
-            bpf_printk("ERROR: Failed to parse message: %s", msg->data);
-            return SK_PASS;
+        u32 stream_id = 0;
+        int done_idx = bl_parse_h2(msg, &stream_id, ms);
+        // if (done_idx < 0) {
+        //     bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
+        //     return SK_PASS;
+        // }
+
+        u8 i = 0;
+        bpf_for(i, 0, MAX_MATCHES+1) {
+            u16 len = ms[i & 0x1F].len;
+            if (len > 0) {
+                u8 *match = bl_extract_match(msg, &ms[i & 0x1F], stream_id);
+                if (match != NULL) {
+                    if (len > 128) len = 128;
+
+                    char tmp[128] = {0};
+                    bpf_probe_read_kernel(tmp, len, match);
+                    bpf_map_update_elem(&matches, &i, tmp, BPF_ANY);
+                    continue;
+                }
+            }
+
+            bpf_map_delete_elem(&matches, &i);
         }
     }
     else {
-        int done_idx = parse_h1(msg, pranges);
-        if (done_idx < 0) {
-            bpf_printk("ERROR: Failed to parse message: %s", msg->data);
-            return SK_PASS;
-        }
+        int done_idx = bl_parse_h1(msg, ms);
+        // if (done_idx < 0) {
+        //     bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
+        //     return SK_PASS;
+        // }
 
-        if (pranges[0].idx == 0 && pranges[0].len == 19) {
+        // if (ms[0].idx == 0 && ms[0].len == 19) {
             int flag = 1;
             bpf_map_update_elem(&upgraded_conns, &ikey, &flag, BPF_ANY);
             num_upgraded_conns += 1;
-        }
+        // }
     }
 
     return SK_PASS;
