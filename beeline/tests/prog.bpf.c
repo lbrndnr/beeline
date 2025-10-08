@@ -66,9 +66,14 @@ int msg_verdict(struct sk_msg_md *msg) {
         //     bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
         //     return SK_PASS;
         // }
+        if (stream_id == 0) {
+            return SK_PASS;
+        }
+
+        bpf_printk("Processing h2 stream %u", stream_id);
 
         u8 i = 0;
-        bpf_for(i, 0, MAX_MATCHES+1) {
+        bpf_for(i, 0, MAX_MATCHES) {
             u16 len = ms[i & 0x1F].len;
             if (len > 0) {
                 u8 *match = bl_extract_match(msg, &ms[i & 0x1F], stream_id);

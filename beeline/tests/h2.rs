@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use anyhow::Result;
 use axum::{
     Router,
@@ -72,6 +70,46 @@ async fn it_upgrades_to_h2() {
 }
 
 #[tokio::test]
+async fn it_parses_indexed_header_fields() {
+    _ = env_logger::try_init();
+
+    let server = start_echo(ECHO_ADDR).await;
+
+    let mut parser = Parser::new(0, 1);
+    // parser.match_preface().expect("match preface");
+    parser.match_http_hdr("method").expect("match method");
+
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj, &parser).expect("attach");
+
+    let client = Client::builder()
+        .connection_verbose(true)
+        .http2_prior_knowledge()
+        .build()
+        .expect("client");
+    let resp = client
+        .get(format!("http://{}", ECHO_ADDR))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        prog.get_match(0)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .take(3)
+            .copied()
+            .collect::<Vec<u8>>(),
+        vec![197, 131, 127] // "get" huffman encoded
+    );
+
+    drop(server);
+    drop(prog);
+}
+
+#[tokio::test]
 async fn it_parses_indexed_literal() {
     _ = env_logger::try_init();
 
@@ -100,7 +138,7 @@ async fn it_parses_indexed_literal() {
 
     assert_eq!(resp.status(), 200);
     assert_eq!(
-        prog.get_match(1)
+        prog.get_match(0)
             .unwrap()
             .unwrap()
             .iter()

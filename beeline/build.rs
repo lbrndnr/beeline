@@ -11,7 +11,7 @@ fn main() {
     let manifest_dir =
         env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set in build script");
     let manifest_dir = PathBuf::from(&manifest_dir);
-    let target_dir = manifest_dir.join("target").join("bpf");
+    let target_dir = manifest_dir.join("..").join("target").join("bpf");
 
     match fs::create_dir(&target_dir) {
         Ok(_) => Ok(()),
@@ -20,16 +20,19 @@ fn main() {
     }
     .expect("Failed to create target/bpf");
 
-    let prog = PathBuf::from(&manifest_dir).join("tests/prog.bpf.c");
+    let prog = PathBuf::from(&manifest_dir)
+        .join("tests")
+        .join("prog.bpf.c");
     let prog = fs::read_to_string(prog).expect("Failed to read prog file");
     println!("cargo:rerun-if-changed={prog:?}");
 
-    let beeline = PathBuf::from(&manifest_dir).join("src/beeline.bpf.c");
+    let beeline = PathBuf::from(&manifest_dir)
+        .join("src")
+        .join("beeline.bpf.c");
     let beeline = fs::read_to_string(beeline).expect("Failed to read beeline file");
     println!("cargo:rerun-if-changed={beeline:?}");
 
     let out = PathBuf::from(&target_dir).join("prog.bpf.c");
-
     let mut file = File::create(&out).expect("Failed to create src file");
     file.write_all(prog.as_bytes())
         .expect("Failed to write to src file");
@@ -50,7 +53,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUST_LOG");
 
     let src = out.to_str().unwrap();
-    let out = PathBuf::from(target_dir).join("prog.skel.rs");
+    let out = PathBuf::from(manifest_dir).join("tests").join("prog.skel");
     SkeletonBuilder::new()
         .source(src)
         .clang_args([

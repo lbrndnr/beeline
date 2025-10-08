@@ -20,10 +20,7 @@ use std::{
 };
 use types::*;
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/target/bpf/prog.skel.rs"
-));
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/prog.skel"));
 
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {
@@ -104,7 +101,6 @@ impl<'obj> TestProgram<'obj> {
         open_skel.maps.rodata_data.as_mut().unwrap().port = address.port() as u32;
 
         let skel = open_skel.load()?;
-
         let sock_map_fd = skel.maps.sock_map.as_fd().as_raw_fd();
 
         let cgroup_fd = std::fs::OpenOptions::new()
@@ -115,6 +111,22 @@ impl<'obj> TestProgram<'obj> {
 
         let sockops = skel.progs.monitor_sockets.attach_cgroup(cgroup_fd)?;
         skel.progs.msg_verdict.attach_sockmap(sock_map_fd)?;
+
+        let id = skel.maps.static_table.info()?.info.id;
+        let static_table = MapHandle::from_map_id(id)?;
+        let key = unsafe { 2.as_bytes() };
+
+        let mut val = vec![0u8; 64];
+        val[0] = 0xa4;
+        val[1] = 0xa9;
+        val[2] = 0x9c;
+        val[3] = 0xf2;
+        val[4] = 0x7f;
+        val[5] = 0xc5;
+        val[6] = 0x83;
+        val[7] = 0x7f;
+
+        static_table.update(&key, &val, MapFlags::ANY)?;
 
         debug!("eBPF http/2 attached");
 

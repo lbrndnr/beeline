@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use log::trace;
 use std::collections::{HashMap, HashSet};
 
@@ -53,14 +53,10 @@ impl DfaBuilder<'_> {
         assert!(self.prev_trans.is_some());
         println!("capture_field_value {:?}", self.prev_trans);
 
-        self.cid = if let Some(cid) = self.cid {
-            Some(cid + 1)
-        } else {
-            Some(1)
-        };
+        let cid = self.dfa.insert_new_capture_start();
 
         if let Some((_, act)) = self.dfa.transitions.get_mut(&self.prev_trans.unwrap()) {
-            *act = Action::CaptureFieldValue(self.cid.unwrap());
+            *act = Action::CaptureFieldValue(cid);
         }
         self
     }

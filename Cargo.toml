@@ -1,22 +1,4 @@
-[package]
-name = "beeline"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
 
-[dependencies]
-anyhow = "1.0.98"
-as-bytes = "0.2.0"
-env_logger = "0.11.8"
-hpack = "0.3.0"
-libbpf-rs = "0.25.0"
-libc = "0.2.173"
-log = "0.4.27"
-
-[build-dependencies]
-libbpf-cargo = "0.25.0"
-
-[dev-dependencies]
-axum = { version = "0.8.4", features = ["http2"] }
-hpack = "0.3.0"
-reqwest = "0.12.20"
-tokio = { version = "1.45.1", features = ["full"] }
+members = ["beeline", "util"]

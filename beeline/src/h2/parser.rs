@@ -40,39 +40,24 @@ impl Parser {
     // }
 
     pub fn match_http_hdr(&mut self, key: &str) -> Result<()> {
-        // // Usage example
-        // let (headers_without_values, headers_with_values) = create_header_maps();
+        // if let Some(idx) = st.get(key) {
+        // let mut idx_encoded = hpack::encoder::encode_integer(*idx, 6);
 
-        // // Look up a header without value
-        // if let Some(index) = headers_without_values.get("host") {
-        //     println!("Host header is at index: {}", index);
+        // println!("Header index: {:?}", idx_encoded);
+
+        // idx_encoded[0] |= 64;
+
+        // println!("Header index: {:?}", idx_encoded);
+
+        let key_encoded = b"\xa4\xa9\x9c\xf2\x7f";
+
+        self.dfa
+            .start_pattern(self.s_any)
+            .push(key_encoded)?
+            .capture_field_value();
+        // .push_optional('*')?
+        // .end_caputuring_and_restart_with("a", self.s_any)?;
         // }
-
-        // // Look up a header with value
-        // if let Some(method_values) = headers_with_values.get(":method") {
-        //     if let Some(index) = method_values.get("GET") {
-        //         println!(":method GET is at index: {}", index);
-        //     }
-        // }
-
-        let (st, st_) = h2::create_header_maps();
-
-        if let Some(idx) = st.get(key) {
-            let mut idx_encoded = hpack::encoder::encode_integer(*idx, 6);
-
-            // println!("Header index: {:?}", idx_encoded);
-
-            idx_encoded[0] |= 64;
-
-            // println!("Header index: {:?}", idx_encoded);
-
-            self.dfa
-                .start_pattern(self.s_any)
-                .push(&idx_encoded)?
-                .capture_field_value();
-            // .push_optional('*')?
-            // .end_caputuring_and_restart_with("a", self.s_any)?;
-        }
 
         // self.dfa
         //     .start_pattern(self.s_any)
