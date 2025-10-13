@@ -184,7 +184,7 @@ static __always_inline int _parse_h1_from(const struct sk_msg_md *msg, u16 start
 }
 
 SEC("freplace")
-int bl_parse_h1(struct sk_msg_md *msg) {
+int parse_h1(struct sk_msg_md *msg) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
     int res = _parse_h1_from(msg, 0, ms, cidx, &s);
@@ -347,7 +347,7 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
 }
 
 SEC("freplace")
-int bl_parse_h2(struct sk_msg_md *msg) {
+int parse_h2(struct sk_msg_md *msg) {
     if (!msg) return -1;
 
     u8 *data = (u8 *)(long)msg->data;
@@ -379,7 +379,7 @@ int bl_parse_h2(struct sk_msg_md *msg) {
 }
 
 SEC("freplace")
-int bl_extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
+int extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
     if (!msg || !str) return -1;
 
     struct hdr_match m = ms[idx & MAX_MATCH_MASK];

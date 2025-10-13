@@ -139,32 +139,32 @@ impl Parser {
         // let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(open_obj)?;
         if log_enabled!(log::Level::Debug) {
-            open_skel.progs.bl_parse_h2.set_log_level(1);
+            open_skel.progs.parse_h2.set_log_level(1);
         }
 
         open_skel
             .progs
-            .bl_parse_h2
-            .set_attach_target(target, Some("bl_parse_h2".to_string()))?;
+            .parse_h2
+            .set_attach_target(target, Some("parse_h2".to_string()))?;
 
         open_skel
             .progs
-            .bl_parse_h1
-            .set_attach_target(target, Some("bl_parse_h1".to_string()))?;
+            .parse_h1
+            .set_attach_target(target, Some("parse_h1".to_string()))?;
 
         open_skel
             .progs
-            .bl_extract_match
-            .set_attach_target(target, Some("bl_extract_match".to_string()))?;
+            .extract_match
+            .set_attach_target(target, Some("extract_match".to_string()))?;
 
         inject_parser(self, &mut open_skel)?;
 
         debug!("Loading");
         let skel = open_skel.load()?;
         debug!("Loading done");
-        let h1 = skel.progs.bl_parse_h1.attach()?;
-        let h2 = skel.progs.bl_parse_h2.attach()?;
-        let ms = skel.progs.bl_extract_match.attach()?;
+        let h1 = skel.progs.parse_h1.attach()?;
+        let h2 = skel.progs.parse_h2.attach()?;
+        let ms = skel.progs.extract_match.attach()?;
 
         let id = skel.maps.static_table.info()?.info.id;
         let static_table = MapHandle::from_map_id(id)?;

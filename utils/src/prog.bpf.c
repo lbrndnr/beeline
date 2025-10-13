@@ -47,7 +47,7 @@ struct {
     __type(value, char[128]);
 } matches SEC(".maps");
 
-__noinline int bl_extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
+__noinline int extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
     int ret = -1;
 
 	__sink(msg);
@@ -60,7 +60,7 @@ __noinline int bl_extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* s
 	return ret;
 }
 
-__noinline int bl_parse_h1(struct sk_msg_md *msg) {
+__noinline int parse_h1(struct sk_msg_md *msg) {
    	int ret = -1;
 
 	__sink(msg);
@@ -71,7 +71,7 @@ __noinline int bl_parse_h1(struct sk_msg_md *msg) {
 	return ret;
 }
 
-__noinline int bl_parse_h2(struct sk_msg_md *msg) {
+__noinline int parse_h2(struct sk_msg_md *msg) {
     int ret = -1;
 
 	__sink(msg);
@@ -101,7 +101,7 @@ int msg_verdict(struct sk_msg_md *msg) {
 
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
     if (is_h2) {
-        int done_idx = bl_parse_h2(msg);
+        int done_idx = parse_h2(msg);
         if (done_idx < 0) {
             bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
             return SK_PASS;
@@ -110,7 +110,7 @@ int msg_verdict(struct sk_msg_md *msg) {
         u32 i = 0;
         bpf_for(i, 0, 32) {
             struct hdr_str str = { 0 };
-            if (bl_extract_match(msg, i, &str) == 0) {
+            if (extract_match(msg, i, &str) == 0) {
                 u16 len = str.len;
                 if (len > 128) len = 128;
 
@@ -124,7 +124,7 @@ int msg_verdict(struct sk_msg_md *msg) {
         }
     }
     else {
-        int done_idx = bl_parse_h1(msg);
+        int done_idx = parse_h1(msg);
         // if (done_idx < 0) {
         //     bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
         //     return SK_PASS;
