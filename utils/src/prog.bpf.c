@@ -1,8 +1,11 @@
-#include "beeline.h"
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_endian.h>
 
 char LICENSE[] SEC("license") = "GPL";
+
+#define __sink(expr) asm volatile("" : "+g"(expr))
 
 struct addr_key {
     u32 ip4;
@@ -12,6 +15,11 @@ struct addr_key {
 struct sock_key {
     struct addr_key local;
     struct addr_key remote;
+};
+
+struct hdr_str {
+    u32 len;
+    u8* ptr;
 };
 
 struct {
@@ -32,14 +40,47 @@ struct {
 volatile const u32 ip4;
 volatile const u32 port;
 
-struct hdr_match ms[MAX_MATCHES] = { 0 };
-
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, MAX_MATCHES);
+    __uint(max_entries, 32);
     __type(key, u32);
     __type(value, char[128]);
 } matches SEC(".maps");
+
+__noinline int bl_extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
+    int ret = -1;
+
+	__sink(msg);
+	__sink(idx);
+	__sink(str);
+	__sink(ret);
+
+	bpf_msg_pull_data(msg, 0, msg->size, 0);
+
+	return ret;
+}
+
+__noinline int bl_parse_h1(struct sk_msg_md *msg) {
+   	int ret = -1;
+
+	__sink(msg);
+	__sink(ret);
+
+	bpf_msg_pull_data(msg, 0, msg->size, 0);
+
+	return ret;
+}
+
+__noinline int bl_parse_h2(struct sk_msg_md *msg) {
+    int ret = -1;
+
+	__sink(msg);
+	__sink(ret);
+
+	bpf_msg_pull_data(msg, 0, msg->size, 0);
+
+	return ret;
+}
 
 SEC("sk_msg")
 int msg_verdict(struct sk_msg_md *msg) {
@@ -60,38 +101,30 @@ int msg_verdict(struct sk_msg_md *msg) {
 
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
     if (is_h2) {
-        u32 stream_id = 0;
-        int done_idx = bl_parse_h2(msg, &stream_id, ms);
-        // if (done_idx < 0) {
-        //     bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
-        //     return SK_PASS;
-        // }
-        if (stream_id == 0) {
+        int done_idx = bl_parse_h2(msg);
+        if (done_idx < 0) {
+            bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
             return SK_PASS;
         }
 
-        bpf_printk("Processing h2 stream %u", stream_id);
+        u32 i = 0;
+        bpf_for(i, 0, 32) {
+            struct hdr_str str = { 0 };
+            if (bl_extract_match(msg, i, &str) == 0) {
+                u16 len = str.len;
+                if (len > 128) len = 128;
 
-        u8 i = 0;
-        bpf_for(i, 0, MAX_MATCHES) {
-            u16 len = ms[i & 0x1F].len;
-            if (len > 0) {
-                u8 *match = bl_extract_match(msg, &ms[i & 0x1F], stream_id);
-                if (match != NULL) {
-                    if (len > 128) len = 128;
-
-                    char tmp[128] = {0};
-                    bpf_probe_read_kernel(tmp, len, match);
-                    bpf_map_update_elem(&matches, &i, tmp, BPF_ANY);
-                    continue;
-                }
+                char tmp[128] = {0};
+                bpf_probe_read_kernel(tmp, len, str.ptr);
+                bpf_map_update_elem(&matches, &i, tmp, BPF_ANY);
             }
-
-            bpf_map_delete_elem(&matches, &i);
+            else {
+                bpf_map_delete_elem(&matches, &i);
+            }
         }
     }
     else {
-        int done_idx = bl_parse_h1(msg, ms);
+        int done_idx = bl_parse_h1(msg);
         // if (done_idx < 0) {
         //     bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
         //     return SK_PASS;

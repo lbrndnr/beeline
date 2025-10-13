@@ -22,32 +22,6 @@ use types::*;
 
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/prog.skel.rs"));
 
-fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
-    let action = match action {
-        Action::CaptureFieldValue(cid) => rodata.a_start_capture | (cid as u16) & rodata.a_id_mask,
-        // Action::EndCapturing(rid) => rodata.a_end_capture | (rid as u16) & rodata.a_id_mask,
-        Action::Done => rodata.a_done,
-        Action::None => 0,
-    };
-
-    trans { state, action }
-}
-
-fn inject_parser(parser: &Parser, skel: &mut OpenProgSkel) -> Result<()> {
-    for (from, to, input, action) in parser.iter_transitions() {
-        let s = *from as usize;
-        let data = skel.maps.rodata_data.as_mut().unwrap();
-        let t = new_transition(*to, *action, data);
-        println!(
-            "Transition from state {} to state {} on input {} with action {:?}",
-            from, to, input, action
-        );
-        data.s2ts[s][*input as usize] = t;
-    }
-
-    Ok(())
-}
-
 fn print(level: PrintLevel, msg: String) {
     let msg = msg.trim_start_matches("libbpf:").trim();
 
@@ -72,7 +46,6 @@ impl<'obj> TestProgram<'obj> {
     pub fn attach<A: ToSocketAddrs>(
         address: A,
         open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
-        parser: &Parser,
     ) -> Result<Self> {
         set_print(Some((PrintLevel::Debug, print)));
 
@@ -86,8 +59,6 @@ impl<'obj> TestProgram<'obj> {
         if log_enabled!(log::Level::Debug) {
             open_skel.progs.msg_verdict.set_log_level(1);
         }
-
-        inject_parser(parser, &mut open_skel)?;
 
         let ip4 = match address {
             SocketAddr::V4(addr) => Ok(u32::from_ne_bytes(addr.ip().octets())),
@@ -112,23 +83,7 @@ impl<'obj> TestProgram<'obj> {
         let sockops = skel.progs.monitor_sockets.attach_cgroup(cgroup_fd)?;
         skel.progs.msg_verdict.attach_sockmap(sock_map_fd)?;
 
-        let id = skel.maps.static_table.info()?.info.id;
-        let static_table = MapHandle::from_map_id(id)?;
-        let key = unsafe { 2.as_bytes() };
-
-        let mut val = vec![0u8; 64];
-        val[0] = 0xa4;
-        val[1] = 0xa9;
-        val[2] = 0x9c;
-        val[3] = 0xf2;
-        val[4] = 0x7f;
-        val[5] = 0xc5;
-        val[6] = 0x83;
-        val[7] = 0x7f;
-
-        static_table.update(&key, &val, MapFlags::ANY)?;
-
-        debug!("eBPF http/2 attached");
+        debug!("Test program attached");
 
         Ok(Self { sockops, skel })
     }
@@ -147,6 +102,10 @@ impl<'obj> TestProgram<'obj> {
         let key = idx as u32;
         let key = unsafe { key.as_bytes() };
         Ok(map.lookup(&key, MapFlags::empty())?)
+    }
+
+    pub fn prog_fd(&self) -> i32 {
+        self.skel.progs.msg_verdict.as_fd().as_raw_fd()
     }
 }
 

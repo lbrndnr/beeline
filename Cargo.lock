@@ -1871,6 +1871,7 @@ dependencies = [
  "as-bytes",
  "beeline",
  "bytes",
+ "libbpf-cargo",
  "libbpf-rs",
  "libc",
  "log 0.4.28",

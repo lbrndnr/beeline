@@ -1,5 +1,4 @@
-use bytes::BytesMut;
-
+#[allow(dead_code)]
 mod huffman;
 pub mod test;
 
@@ -70,14 +69,14 @@ pub mod test;
 //     ("www-authenticate".to_string(), None),
 // ];
 
-fn main() {
-    let mut dst = BytesMut::with_capacity(128);
-    let val = "method";
-    huffman::encode(val.as_bytes(), &mut dst);
-    println!("{:?}", dst);
+// fn main() {
+//     let mut dst = BytesMut::with_capacity(128);
+//     let val = "method";
+//     huffman::encode(val.as_bytes(), &mut dst);
+//     println!("{:?}", dst);
 
-    let mut dst = BytesMut::with_capacity(128);
-    let val = "GET";
-    huffman::encode(val.as_bytes(), &mut dst);
-    println!("{:?}", dst);
-}
+//     let mut dst = BytesMut::with_capacity(128);
+//     let val = "GET";
+//     huffman::encode(val.as_bytes(), &mut dst);
+//     println!("{:?}", dst);
+// }

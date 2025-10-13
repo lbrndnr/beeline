@@ -1,5 +1,9 @@
 #include "vmlinux.h"
-#include "beeline.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_endian.h>
+
+char LICENSE[] SEC("license") = "GPL";
 
 #ifndef bpf_clamp_uminmax
 #define bpf_clamp_uminmax(VAR, UMIN, UMAX)                                                         \
@@ -38,6 +42,18 @@ enum h2_parse_state {
     // strings
     H2_KEY = 5,
     H2_VAL = 6,
+};
+
+struct hdr_match {
+    u16 idx;
+    u16 len;
+    u8 src;
+    u32 sid;
+};
+
+struct hdr_str {
+    u32 len;
+    u8* ptr;
 };
 
 enum hdr_match_src {
@@ -94,8 +110,10 @@ struct trans {
 #define MAX_MATCH_MASK 31
 #define MAX_STATES 256
 #define MAX_TRANS 256
+#define MAX_MATCHES 32
 
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
+struct hdr_match ms[MAX_MATCHES] = { 0 };
 
 static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *action) {
     state &= 0xFF;
@@ -165,7 +183,8 @@ static __always_inline int _parse_h1_from(const struct sk_msg_md *msg, u16 start
     return -len;
 }
 
-__always_inline int bl_parse_h1(struct sk_msg_md *msg, struct hdr_match *ms) {
+SEC("freplace")
+int bl_parse_h1(struct sk_msg_md *msg) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
     int res = _parse_h1_from(msg, 0, ms, cidx, &s);
@@ -231,22 +250,15 @@ static __always_inline bool _parse_h2_hpack(u8 c, enum h2_parse_state *ps, u32 *
             *n = 7;
             *m = 0;
         }
-        else if (c == 64) {
-            *ps = H2_KEY_LEN;
-            *n = 7;
-            *m = 0;
-            return false;
+        else if (c == 64 || c == 0) {
+            *ps = H2_IDX;
+            *k = c;
+            return true;
         }
         else if ((c & 192) == 64) {
             *ps = H2_IDX;
             *n = 6;
             *m = 0;
-        }
-        else if (c == 0) {
-            *ps = H2_KEY_LEN;
-            *n = 7;
-            *m = 0;
-            return false;
         }
         else if ((c & 240) == 0) {
             *ps = H2_IDX;
@@ -306,16 +318,14 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
         if (done && ps == H2_IDX) {
             bpf_log("parsed idx: %d", k);
 
-            if (k == 0 || k > 61) return -1;
-            bpf_clamp_uminmax(k, 1, 61);
-
             u8 *entry = bpf_map_lookup_elem(&static_table, &k);
             if (!entry) return -1;
 
             ps = 0;
             *s = s_any;
-            for (u8 j = 0; j < 64; j++) {
-                u8 c = entry[j];
+            u8 j = 0;
+            bpf_for(j, 0, 64) {
+                u8 c = entry[j & 0x3F];
                 _next(*s, c, s, &a);
 
                 if ((a & a_start_capture) != 0) {
@@ -336,7 +346,10 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
     return 0;
 }
 
-__always_inline int bl_parse_h2(struct sk_msg_md *msg, u32 *sid, struct hdr_match *ms) {
+SEC("freplace")
+int bl_parse_h2(struct sk_msg_md *msg) {
+    if (!msg) return -1;
+
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
 
@@ -344,7 +357,6 @@ __always_inline int bl_parse_h2(struct sk_msg_md *msg, u32 *sid, struct hdr_matc
 
     u32 len = data[0] << 16 | data[1] << 8 | data[2];
     u8 type = data[3];
-    u32 stream_id = data[5] << 24 | data[6] << 16 | data[7] << 8 | data[8];
 
     bpf_log("Parsing HTTP/2 message with length %d, type %d", len, type);
 
@@ -357,40 +369,47 @@ __always_inline int bl_parse_h2(struct sk_msg_md *msg, u32 *sid, struct hdr_matc
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
-            *sid = 0;
             return res;
         }
 
         res = _parse_h2_from(msg, -res, ms, &s);
     }
 
-    *sid = stream_id;
     return res + 9;
 }
 
-__always_inline u8* bl_extract_match(struct sk_msg_md *msg, struct hdr_match *m, u32 sid) {
-    if (m->src == HDR_SRC_MSG) {
+SEC("freplace")
+int bl_extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
+    if (!msg || !str) return -1;
+
+    struct hdr_match m = ms[idx & MAX_MATCH_MASK];
+    if (m.len == 0) return -1;
+    str->len = m.len;
+
+    if (m.src == HDR_SRC_MSG) {
         u8 *data = (u8 *)(long)msg->data;
         u8 *data_end = (u8 *)(long)msg->data_end;
 
-        if (data + m->idx + m->len > data_end) return NULL;
+        if (data + m.idx + m.len > data_end) return -1;
 
-        return data + m->idx;
+        str->ptr = data + m.idx;
+        return 0;
     }
 
-    if (m->src == HDR_SRC_ST) {
-        u32 idx = m->idx;
+    if (m.src == HDR_SRC_ST) {
+        u32 idx = m.idx;
         u8 *data = bpf_map_lookup_elem(&static_table, &idx);
-        if (!data) return NULL;
-        return data + 64 - m->len;
+        if (!data) return -1;
+        str->ptr = data + 64 - m.len;
+        return 0;
     }
 
     // if (m->src == HDR_SRC_DT) {
     //     struct dynamic_table *dt = bpf_map_lookup_elem(&dynamic_tables, &sid);
-    //     if (!dt) return NULL;
+    //     if (!dt) return -1;
 
     //     return bpf_map_lookup_elem(dt, &m->idx);
     // }
 
-    return NULL;
+    return -1;
 }

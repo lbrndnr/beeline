@@ -47,7 +47,7 @@ async fn it_upgrades_to_h2() {
     // parser.match_preface().expect("match preface");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj, &parser).expect("attach");
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
     let client = Client::builder()
         .connection_verbose(true)
@@ -78,7 +78,12 @@ async fn it_parses_indexed_header_fields() {
     parser.match_http_hdr("method").expect("match method");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj, &parser).expect("attach");
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+
+    let mut open_obj2 = OpenObject::new();
+    let parser = parser
+        .attach(prog.prog_fd(), &mut open_obj2)
+        .expect("attach parser");
 
     let client = Client::builder()
         .connection_verbose(true)
@@ -105,6 +110,7 @@ async fn it_parses_indexed_header_fields() {
 
     drop(server);
     drop(prog);
+    drop(parser);
 }
 
 #[tokio::test]
@@ -119,8 +125,13 @@ async fn it_parses_indexed_literal() {
         .match_http_hdr("user-agent")
         .expect("match user-agent");
 
-    let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj, &parser).expect("attach");
+    let mut open_obj2 = OpenObject::new();
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj2).expect("attach program");
+
+    let mut open_obj2 = OpenObject::new();
+    let parser = parser
+        .attach(prog.prog_fd(), &mut open_obj2)
+        .expect("attach parser");
 
     let client = Client::builder()
         .connection_verbose(true)
@@ -148,4 +159,5 @@ async fn it_parses_indexed_literal() {
 
     drop(server);
     drop(prog);
+    drop(parser);
 }
