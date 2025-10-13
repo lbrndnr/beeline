@@ -8,9 +8,7 @@ use axum::{
 };
 use beeline::h2::Parser;
 use reqwest::Client;
-use utils::{OpenObject, TestProgram};
-
-mod utils;
+use utils::test::{OpenObject, TestProgram};
 
 const ECHO_ADDR: &str = "127.0.0.1:3000";
 

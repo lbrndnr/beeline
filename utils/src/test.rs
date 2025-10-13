@@ -20,7 +20,7 @@ use std::{
 };
 use types::*;
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/prog.skel"));
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/prog.skel.rs"));
 
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {

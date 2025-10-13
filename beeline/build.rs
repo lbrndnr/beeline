@@ -21,7 +21,9 @@ fn main() {
     .expect("Failed to create target/bpf");
 
     let prog = PathBuf::from(&manifest_dir)
-        .join("tests")
+        .join("..")
+        .join("utils")
+        .join("src")
         .join("prog.bpf.c");
     let prog = fs::read_to_string(prog).expect("Failed to read prog file");
     println!("cargo:rerun-if-changed={prog:?}");
@@ -53,7 +55,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUST_LOG");
 
     let src = out.to_str().unwrap();
-    let out = PathBuf::from(manifest_dir).join("tests").join("prog.skel");
+    let out = PathBuf::from(manifest_dir)
+        .join("..")
+        .join("utils")
+        .join("src")
+        .join("prog.skel.rs");
     SkeletonBuilder::new()
         .source(src)
         .clang_args([
