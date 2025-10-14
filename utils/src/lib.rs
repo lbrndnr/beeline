@@ -1,5 +1,3 @@
-#[allow(dead_code)]
-mod huffman;
 pub mod test;
 
 // const STATIC_TABLE: Vec<(String, Option<String>)> = vec![

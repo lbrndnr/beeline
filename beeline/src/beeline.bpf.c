@@ -56,10 +56,10 @@ struct hdr_str {
     u8* ptr;
 };
 
-enum hdr_match_src {
-    HDR_SRC_MSG = 0,
-    HDR_SRC_ST = 1,
-    HDR_SRC_DT = 2,
+enum h2_hdr_src {
+    HDR_SRC_MSG = 1,
+    HDR_SRC_ST = 2,
+    HDR_SRC_DT = 3,
 };
 
 struct {
@@ -250,9 +250,10 @@ static __always_inline bool _parse_h2_hpack(u8 c, enum h2_parse_state *ps, u32 *
             *n = 7;
             *m = 0;
         }
-        else if (c == 64 || c == 0) {
+        else if (c == 64) {
             *ps = H2_IDX;
             *k = c;
+            *m = 0;
             return true;
         }
         else if ((c & 192) == 64) {
@@ -303,7 +304,8 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
     u8 flags = data[4];
     u32 stream_id = data[5] << 24 | data[6] << 16 | data[7] << 8 | data[8];
 
-    struct dynamic_table *dt = bpf_map_lookup_elem(&dynamic_tables, &stream_id);
+    struct dynamic_table *dynamic_table = bpf_map_lookup_elem(&dynamic_tables, &stream_id);
+    // if (!dynamic_table) return -1;
 
     u32 n = 0, m = 0;
     u32 i = 0, k = 0;
@@ -313,11 +315,12 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
-        bool done = _parse_h2_hpack(c, &ps, &n, &m, &k);
+        enum h2_hdr_src idx_src = _parse_h2_hpack(c, &ps, &n, &m, &k);
 
-        if (done && ps == H2_IDX) {
+        if (idx_src > 0 && ps == H2_IDX) {
             bpf_log("parsed idx: %d", k);
 
+            // void *table = (k <= 61) ? (void*)&static_table : (void*)dynamic_table;
             u8 *entry = bpf_map_lookup_elem(&static_table, &k);
             if (!entry) return -1;
 

@@ -4,6 +4,9 @@ pub mod dfa;
 pub mod parser;
 pub use parser::Parser;
 
+#[allow(dead_code)]
+mod huffman;
+
 fn create_header_maps() -> (
     HashMap<String, usize>,
     HashMap<String, HashMap<String, usize>>,
@@ -68,19 +71,19 @@ fn create_header_maps() -> (
     let mut method_map = HashMap::new();
     method_map.insert("GET".to_string(), 2);
     method_map.insert("POST".to_string(), 3);
-    headers_with_values.insert(":method".to_string(), method_map);
+    headers_with_values.insert("method".to_string(), method_map);
 
     // :path
     let mut path_map = HashMap::new();
     path_map.insert("/".to_string(), 4);
     path_map.insert("/index.html".to_string(), 5);
-    headers_with_values.insert(":path".to_string(), path_map);
+    headers_with_values.insert("path".to_string(), path_map);
 
     // :scheme
     let mut scheme_map = HashMap::new();
     scheme_map.insert("http".to_string(), 6);
     scheme_map.insert("https".to_string(), 7);
-    headers_with_values.insert(":scheme".to_string(), scheme_map);
+    headers_with_values.insert("scheme".to_string(), scheme_map);
 
     // :status
     let mut status_map = HashMap::new();
@@ -91,7 +94,7 @@ fn create_header_maps() -> (
     status_map.insert("400".to_string(), 12);
     status_map.insert("404".to_string(), 13);
     status_map.insert("500".to_string(), 14);
-    headers_with_values.insert(":status".to_string(), status_map);
+    headers_with_values.insert("status".to_string(), status_map);
 
     // accept-encoding
     let mut accept_encoding_map = HashMap::new();

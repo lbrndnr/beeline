@@ -43,11 +43,11 @@ async fn it_upgrades_to_h2() {
 
     let server = start_echo(ECHO_ADDR).await;
 
-    let mut parser = Parser::new(0, 1);
-    // parser.match_preface().expect("match preface");
-
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+
+    let mut parser = Parser::new();
+    // parser.match_preface().expect("match preface");
 
     let client = Client::builder()
         .connection_verbose(true)
@@ -68,22 +68,18 @@ async fn it_upgrades_to_h2() {
 }
 
 #[tokio::test]
-async fn it_parses_indexed_header_fields() {
+async fn it_parses_indexed_header_field() {
     _ = env_logger::try_init();
 
     let server = start_echo(ECHO_ADDR).await;
 
-    let mut parser = Parser::new(0, 1);
-    // parser.match_preface().expect("match preface");
-    parser.match_http_hdr("method").expect("match method");
-
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
-    let mut open_obj2 = OpenObject::new();
-    let parser = parser
-        .attach(prog.prog_fd(), &mut open_obj2)
-        .expect("attach parser");
+    let mut parser = Parser::new();
+    // parser.match_preface().expect("match preface");
+    parser.match_http_hdr("method").expect("match method");
+    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
     let client = Client::builder()
         .connection_verbose(true)
@@ -114,24 +110,20 @@ async fn it_parses_indexed_header_fields() {
 }
 
 #[tokio::test]
-async fn it_parses_indexed_literal() {
+async fn it_parses_new_literal_header_field() {
     _ = env_logger::try_init();
 
     let server = start_echo(ECHO_ADDR).await;
 
-    let mut parser = Parser::new(0, 1);
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+
+    let mut parser = Parser::new();
     // parser.match_preface().expect("match preface");
     parser
         .match_http_hdr("user-agent")
         .expect("match user-agent");
-
-    let mut open_obj2 = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj2).expect("attach program");
-
-    let mut open_obj2 = OpenObject::new();
-    let parser = parser
-        .attach(prog.prog_fd(), &mut open_obj2)
-        .expect("attach parser");
+    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
     let client = Client::builder()
         .connection_verbose(true)

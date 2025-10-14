@@ -1,19 +1,22 @@
-use crate::h2::dfa::{Action, Dfa};
-use anyhow::Result;
+use crate::h2::{
+    create_header_maps,
+    dfa::{Action, Dfa},
+    huffman,
+};
+use anyhow::{Result, bail};
 use as_bytes::AsBytes;
+use bytes::BytesMut;
 use libbpf_rs::{
-    Link, MapCore, MapFlags, MapHandle, PrintLevel, set_print,
+    Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
 use log::{debug, info, log_enabled, warn};
 use std::mem::MaybeUninit;
 use types::*;
 
-const CRLF: &str = "\r\n";
-
 pub struct Parser {
-    pub s_init: u16,
-    pub s_any: u16,
+    s_init: u16,
+    s_any: u16,
 
     dfa: Dfa,
 }
@@ -58,12 +61,12 @@ fn print(level: PrintLevel, msg: String) {
 
 #[allow(dead_code)]
 impl Parser {
-    pub fn new(s_init: u16, s_any: u16) -> Parser {
-        let states = vec![s_init, s_any];
+    pub fn new() -> Parser {
+        let states = vec![0, 1];
 
         Parser {
-            s_init,
-            s_any,
+            s_init: 0,
+            s_any: 1,
             dfa: Dfa::new(states.into_iter()),
         }
     }
@@ -92,15 +95,13 @@ impl Parser {
 
         // println!("Header index: {:?}", idx_encoded);
 
-        let key_encoded = b"\xa4\xa9\x9c\xf2\x7f";
+        let mut key_encoded = BytesMut::with_capacity(key.len());
+        huffman::encode(key.as_bytes(), &mut key_encoded);
 
         self.dfa
             .start_pattern(self.s_any)
-            .push(key_encoded)?
+            .push(&key_encoded)?
             .capture_field_value();
-        // .push_optional('*')?
-        // .end_caputuring_and_restart_with("a", self.s_any)?;
-        // }
 
         // self.dfa
         //     .start_pattern(self.s_any)
@@ -128,16 +129,37 @@ impl Parser {
         self.dfa.iter_transitions()
     }
 
-    pub fn attach<'obj>(
-        &self,
-        target: i32,
-        open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
-    ) -> Result<(Link, Link, Link)> {
+    fn populate_static_table(&self, static_table: &MapHandle) -> Result<()> {
+        let (st_keys, st_hfs) = create_header_maps();
+
+        for (key, vals) in st_hfs.iter() {
+            for (val, idx) in vals.iter() {
+                let mut hf = BytesMut::with_capacity(key.len() + val.len());
+                huffman::encode(key.as_bytes(), &mut hf);
+                huffman::encode(val.as_bytes(), &mut hf);
+
+                let mut hf = hf.to_vec();
+                if hf.len() > 64 {
+                    bail!("Header field too long.");
+                }
+                hf.resize(64, 0);
+
+                let idx = *idx as u32;
+                let idx = unsafe { idx.as_bytes() };
+
+                static_table.update(&idx, &hf, MapFlags::ANY)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn attach<'obj>(&self, target: i32) -> Result<(Link, Link, Link)> {
         set_print(Some((PrintLevel::Debug, print)));
 
         let skel_builder = BeelineSkelBuilder::default();
-        // let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
-        let mut open_skel = skel_builder.open(open_obj)?;
+        let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
+        let mut open_skel = skel_builder.open(&mut open_obj)?;
         if log_enabled!(log::Level::Debug) {
             open_skel.progs.parse_h2.set_log_level(1);
         }
@@ -159,28 +181,14 @@ impl Parser {
 
         inject_parser(self, &mut open_skel)?;
 
-        debug!("Loading");
         let skel = open_skel.load()?;
-        debug!("Loading done");
         let h1 = skel.progs.parse_h1.attach()?;
         let h2 = skel.progs.parse_h2.attach()?;
         let ms = skel.progs.extract_match.attach()?;
 
         let id = skel.maps.static_table.info()?.info.id;
         let static_table = MapHandle::from_map_id(id)?;
-        let key = unsafe { 2.as_bytes() };
-
-        let mut val = vec![0u8; 64];
-        val[0] = 0xa4;
-        val[1] = 0xa9;
-        val[2] = 0x9c;
-        val[3] = 0xf2;
-        val[4] = 0x7f;
-        val[5] = 0xc5;
-        val[6] = 0x83;
-        val[7] = 0x7f;
-
-        static_table.update(&key, &val, MapFlags::ANY)?;
+        self.populate_static_table(&static_table)?;
 
         debug!("Beeline http/2 attached");
 
