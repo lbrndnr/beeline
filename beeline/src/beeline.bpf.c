@@ -32,6 +32,16 @@ char LICENSE[] SEC("license") = "GPL";
     #define bpf_err(...) (0)
 #endif
 
+struct ip4_addr {
+    u32 ip4;
+    u32 port;
+};
+
+struct ip4_conn {
+    struct ip4_addr local;
+    struct ip4_addr remote;
+};
+
 enum h2_parse_state {
     // integers
     H2_IDX = 1,
@@ -69,19 +79,17 @@ struct {
     __type(value, u8[64]);
 } static_table SEC(".maps");
 
-struct dynamic_table {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 100);
-    __type(key, u32);
-	__type(value, u8[64]);
+struct dynamic_table_key {
+    struct ip4_conn conn;
+    u32 idx;
 };
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
+    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
-    __type(key, u32);
-	__array(values, struct dynamic_table);
-} dynamic_tables SEC(".maps");
+    __type(key, struct dynamic_table_key);
+	__type(value, u8[64]);
+} dynamic_table SEC(".maps");
 
 const u16 a_done = 1 << 14;
 const u16 a_start_capture = 1 << 13;
@@ -113,7 +121,12 @@ struct trans {
 #define MAX_MATCHES 32
 
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
-struct hdr_match ms[MAX_MATCHES] = { 0 };
+
+struct parse_res {
+    struct hdr_match ms[MAX_MATCHES];
+};
+
+struct parse_res parse_res = { 0 };
 
 static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *action) {
     state &= 0xFF;
@@ -187,14 +200,14 @@ SEC("freplace")
 int parse_h1(struct sk_msg_md *msg) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
-    int res = _parse_h1_from(msg, 0, ms, cidx, &s);
+    int res = _parse_h1_from(msg, 0, parse_res.ms, cidx, &s);
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
             return res;
         }
 
-        res = _parse_h1_from(msg, -res, ms, cidx, &s);
+        res = _parse_h1_from(msg, -res, parse_res.ms, cidx, &s);
     }
 
     return res;
@@ -288,7 +301,57 @@ static __always_inline bool _parse_h2_hpack(u8 c, enum h2_parse_state *ps, u32 *
     return true;
 }
 
-static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start, struct hdr_match *ms, u16* s) {
+__noinline int _parse_h2_table_entry(const struct sk_msg_md *msg, u16 *s, u32 idx, struct parse_res *pres) {
+    if (!msg || !pres || !s) return -1;
+
+    u8 *entry = NULL;
+    if (idx > 61) {
+        struct ip4_conn conn = {
+            .local = {
+                .ip4 = msg->local_ip4,
+                .port = msg->local_port
+            },
+            .remote = {
+                .ip4 = msg->remote_ip4,
+                .port = bpf_ntohl(msg->remote_port)
+            }
+        };
+
+        struct dynamic_table_key key = {
+            .conn = conn,
+            .idx = idx
+        };
+        entry = bpf_map_lookup_elem(&dynamic_table, &key);
+    }
+    else {
+        entry = bpf_map_lookup_elem(&static_table, &idx);
+    }
+
+    if (!entry) return -1;
+
+    u8 j = 0;
+    u16 a = 0;
+    bpf_for(j, 0, 64) {
+        u8 c = entry[j & 0x3F];
+        _next(*s, c, s, &a);
+
+        if ((a & a_start_capture) != 0) {
+            u8 cid = a & a_id_mask & MAX_MATCH_MASK;
+            bpf_log("capture: %d {%d, %d, %d}", cid, idx, 64-j, HDR_SRC_ST);
+            pres->ms[cid & 0x1F] = (struct hdr_match) {
+                .idx = idx,
+                .len = 63-j,
+                .src = HDR_SRC_ST,
+            };
+            a = 0;
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start, u16* s, struct parse_res *pres) {
     char *data = (char *)(long)msg->data;
     char *data_end = (char *)(long)msg->data_end;
     u32 len = (u32)(data_end - data) & MAX_BYTES;
@@ -304,45 +367,22 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
     u8 flags = data[4];
     u32 stream_id = data[5] << 24 | data[6] << 16 | data[7] << 8 | data[8];
 
-    struct dynamic_table *dynamic_table = bpf_map_lookup_elem(&dynamic_tables, &stream_id);
-    // if (!dynamic_table) return -1;
-
     u32 n = 0, m = 0;
     u32 i = 0, k = 0;
-    u16 a = 0;
     enum h2_parse_state ps = 0;
 
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
-        enum h2_hdr_src idx_src = _parse_h2_hpack(c, &ps, &n, &m, &k);
+        bool done = _parse_h2_hpack(c, &ps, &n, &m, &k);
 
-        if (idx_src > 0 && ps == H2_IDX) {
+        if (done && ps == H2_IDX) {
             bpf_log("parsed idx: %d", k);
-
-            // void *table = (k <= 61) ? (void*)&static_table : (void*)dynamic_table;
-            u8 *entry = bpf_map_lookup_elem(&static_table, &k);
-            if (!entry) return -1;
 
             ps = 0;
             *s = s_any;
-            u8 j = 0;
-            bpf_for(j, 0, 64) {
-                u8 c = entry[j & 0x3F];
-                _next(*s, c, s, &a);
 
-                if ((a & a_start_capture) != 0) {
-                    u8 cid = a & a_id_mask & MAX_MATCH_MASK;
-                    bpf_log("capture: %d {%d, %d, %d}", cid, k, 64-j, HDR_SRC_ST);
-                    ms[cid & 0x1F] = (struct hdr_match) {
-                        .idx = k,
-                        .len = 63-j,
-                        .src = HDR_SRC_ST,
-                    };
-                    a = 0;
-                    break;
-                }
-            }
+            if (_parse_h2_table_entry(msg, s, k, pres) < 0) return -1;
         }
     }
 
@@ -368,14 +408,14 @@ int parse_h2(struct sk_msg_md *msg) {
     }
 
     u16 s = s_any;
-    int res = _parse_h2_from(msg, 9, ms, &s);
+    int res = _parse_h2_from(msg, 9, &s, &parse_res);
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
             return res;
         }
 
-        res = _parse_h2_from(msg, -res, ms, &s);
+        res = _parse_h2_from(msg, -res, &s, &parse_res);
     }
 
     return res + 9;
@@ -385,7 +425,7 @@ SEC("freplace")
 int extract_match(struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
     if (!msg || !str) return -1;
 
-    struct hdr_match m = ms[idx & MAX_MATCH_MASK];
+    struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
     if (m.len == 0) return -1;
     str->len = m.len;
 
