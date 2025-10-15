@@ -34,21 +34,6 @@ fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     trans { state, action }
 }
 
-fn inject_parser(parser: &Parser, skel: &mut OpenBeelineSkel) -> Result<()> {
-    for (from, to, input, action) in parser.iter_transitions() {
-        let s = *from as usize;
-        let data = skel.maps.rodata_data.as_mut().unwrap();
-        let t = new_transition(*to, *action, data);
-        println!(
-            "Transition from state {} to state {} on input {} with action {:?}",
-            from, to, input, action
-        );
-        data.s2ts[s][*input as usize] = t;
-    }
-
-    Ok(())
-}
-
 fn print(level: PrintLevel, msg: String) {
     let msg = msg.trim_start_matches("libbpf:").trim();
 
@@ -86,15 +71,6 @@ impl Parser {
     // }
 
     pub fn match_http_hdr(&mut self, key: &str) -> Result<()> {
-        // if let Some(idx) = st.get(key) {
-        // let mut idx_encoded = hpack::encoder::encode_integer(*idx, 6);
-
-        // println!("Header index: {:?}", idx_encoded);
-
-        // idx_encoded[0] |= 64;
-
-        // println!("Header index: {:?}", idx_encoded);
-
         let mut key_encoded = BytesMut::with_capacity(key.len());
         huffman::encode(key.as_bytes(), &mut key_encoded);
 
@@ -102,19 +78,6 @@ impl Parser {
             .start_pattern(self.s_any)
             .push(&key_encoded)?
             .capture_field_value();
-
-        // self.dfa
-        //     .start_pattern(self.s_any)
-        //     .push(CRLF)?
-        //     .push(key)?
-        //     .push_optional('\t')?
-        //     .push_optional(' ')?
-        //     .push(":")?
-        //     .push_optional('\t')?
-        //     .push_optional(' ')?
-        //     .start_capturing()
-        //     .push_optional('*')?
-        //     .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
         Ok(())
     }
@@ -130,26 +93,47 @@ impl Parser {
     }
 
     fn populate_static_table(&self, static_table: &MapHandle) -> Result<()> {
-        let (st_keys, st_hfs) = create_header_maps();
+        let insert = |idx: u32, key: &str, val: Option<&str>| {
+            let mut hf_key = BytesMut::with_capacity(key.len());
+            huffman::encode(key.as_bytes(), &mut hf_key);
 
+            let val_len = val.map(|v| v.len()).unwrap_or(0);
+            let mut hf_val = BytesMut::with_capacity(val_len);
+            if let Some(val) = val {
+                huffman::encode(val.as_bytes(), &mut hf_val);
+            }
+
+            let mut hf_key = hf_key.to_vec();
+            let mut hf_val = hf_val.to_vec();
+
+            hf_key.resize(32, 0);
+            hf_val.resize(32, 0);
+
+            let hf = header_field {
+                key: hf_key.try_into().unwrap(),
+                val: hf_val.try_into().unwrap(),
+            };
+
+            let idx = unsafe { idx.as_bytes() };
+            let hf = unsafe { hf.as_bytes() };
+
+            static_table.update(&idx, &hf, MapFlags::ANY)?;
+
+            anyhow::Ok(())
+        };
+
+        let (st_keys, st_hfs) = create_header_maps();
         for (key, vals) in st_hfs.iter() {
             for (val, idx) in vals.iter() {
-                let mut hf = BytesMut::with_capacity(key.len() + val.len());
-                huffman::encode(key.as_bytes(), &mut hf);
-                huffman::encode(val.as_bytes(), &mut hf);
-
-                let mut hf = hf.to_vec();
-                if hf.len() > 64 {
-                    bail!("Header field too long.");
-                }
-                hf.resize(64, 0);
-
-                let idx = *idx as u32;
-                let idx = unsafe { idx.as_bytes() };
-
-                static_table.update(&idx, &hf, MapFlags::ANY)?;
+                insert(*idx as u32, key, Some(val))?;
             }
         }
+
+        for (key, idx) in st_keys.iter() {
+            insert(*idx as u32, key, None)?;
+        }
+
+        static_table.freeze()?;
 
         Ok(())
     }
@@ -179,7 +163,7 @@ impl Parser {
             .extract_match
             .set_attach_target(target, Some("extract_match".to_string()))?;
 
-        inject_parser(self, &mut open_skel)?;
+        self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
         let h1 = skel.progs.parse_h1.attach()?;
@@ -193,5 +177,16 @@ impl Parser {
         debug!("Beeline http/2 attached");
 
         anyhow::Ok((h1, h2, ms))
+    }
+
+    fn inject(&self, skel: &mut OpenBeelineSkel) -> Result<()> {
+        for (from, to, input, action) in self.iter_transitions() {
+            let s = *from as usize;
+            let data = skel.maps.rodata_data.as_mut().unwrap();
+            let t = new_transition(*to, *action, data);
+            data.s2ts[s][*input as usize] = t;
+        }
+
+        Ok(())
     }
 }

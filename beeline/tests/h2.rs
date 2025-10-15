@@ -7,7 +7,7 @@ use axum::{
     routing::get,
 };
 use beeline::h2::Parser;
-use reqwest::Client;
+use reqwest::{Client, header};
 use utils::test::{OpenObject, TestProgram};
 
 const ECHO_ADDR: &str = "127.0.0.1:3000";
@@ -50,7 +50,6 @@ async fn it_upgrades_to_h2() {
     // parser.match_preface().expect("match preface");
 
     let client = Client::builder()
-        .connection_verbose(true)
         .http2_prior_knowledge()
         .build()
         .expect("client");
@@ -82,7 +81,6 @@ async fn it_parses_indexed_header_field() {
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
     let client = Client::builder()
-        .connection_verbose(true)
         .http2_prior_knowledge()
         .build()
         .expect("client");
@@ -110,7 +108,7 @@ async fn it_parses_indexed_header_field() {
 }
 
 #[tokio::test]
-async fn it_parses_new_literal_header_field() {
+async fn it_parses_literal_header_field_incremental_indexing_indexed() {
     _ = env_logger::try_init();
 
     let server = start_echo(ECHO_ADDR).await;
@@ -126,16 +124,14 @@ async fn it_parses_new_literal_header_field() {
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
     let client = Client::builder()
-        .connection_verbose(true)
         .http2_prior_knowledge()
         .build()
         .expect("client");
-    let resp = client
+    let req = client
         .get(format!("http://{}", ECHO_ADDR))
-        .header("user-agent", "beeline")
-        .send()
-        .await
-        .expect("request");
+        .header(header::USER_AGENT, "beeline");
+
+    let resp = req.send().await.expect("request");
 
     assert_eq!(resp.status(), 200);
     assert_eq!(

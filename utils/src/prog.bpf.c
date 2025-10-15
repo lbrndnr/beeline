@@ -107,19 +107,22 @@ int msg_verdict(struct sk_msg_md *msg) {
             return SK_PASS;
         }
 
-        u32 i = 0;
-        bpf_for(i, 0, 32) {
-            struct hdr_str str = { 0 };
-            if (extract_match(msg, i, &str) == 0) {
-                u16 len = str.len;
-                if (len > 128) len = 128;
+        // only store matches if we parsed a HEADER frame
+        if (done_idx > 9) {
+            u32 i = 0;
+            bpf_for(i, 0, 32) {
+                struct hdr_str str = { 0 };
+                if (extract_match(msg, i, &str) == 0) {
+                    u16 len = str.len;
+                    if (len > 128) len = 128;
 
-                char tmp[128] = {0};
-                bpf_probe_read_kernel(tmp, len, str.ptr);
-                bpf_map_update_elem(&matches, &i, tmp, BPF_ANY);
-            }
-            else {
-                bpf_map_delete_elem(&matches, &i);
+                    char tmp[128] = {0};
+                    bpf_probe_read_kernel(tmp, len, str.ptr);
+                    bpf_map_update_elem(&matches, &i, tmp, BPF_ANY);
+                }
+                else {
+                    bpf_map_delete_elem(&matches, &i);
+                }
             }
         }
     }
