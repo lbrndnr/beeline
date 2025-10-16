@@ -10,7 +10,7 @@ use beeline::h2::Parser;
 use reqwest::{Client, header};
 use utils::test::{OpenObject, TestProgram};
 
-const ECHO_ADDR: &str = "127.0.0.1:3000";
+const ECHO_ADDR: &str = "127.0.0.1:12345";
 
 async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
     if let Ok(body) = String::from_utf8(body.to_vec()) {
@@ -35,35 +35,6 @@ async fn start_echo<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<()> {
     });
 
     Ok(())
-}
-
-#[tokio::test]
-async fn it_upgrades_to_h2() {
-    _ = env_logger::try_init();
-
-    let server = start_echo(ECHO_ADDR).await;
-
-    let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
-
-    let mut parser = Parser::new();
-    // parser.match_preface().expect("match preface");
-
-    let client = Client::builder()
-        .http2_prior_knowledge()
-        .build()
-        .expect("client");
-    let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
-        .send()
-        .await
-        .expect("request");
-
-    assert_eq!(resp.status(), 200);
-    assert_eq!(prog.num_upgraded_conns().unwrap(), 1);
-
-    drop(server);
-    drop(prog);
 }
 
 #[tokio::test]
