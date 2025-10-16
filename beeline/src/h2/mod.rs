@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-pub mod dfa;
-pub mod parser;
+mod dfa;
+mod parser;
 pub use parser::Parser;
 
 #[allow(dead_code)]
@@ -102,4 +102,26 @@ fn create_header_maps() -> (
     headers_with_values.insert("accept-encoding".to_string(), accept_encoding_map);
 
     (headers_without_values, headers_with_values)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// Capture a field value identified by the capture id
+    CaptureFieldValue(u8),
+
+    /// Terminates parsing
+    Done,
+
+    // No action
+    None,
+}
+
+impl Action {
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, Action::None)
+    }
 }

@@ -1,9 +1,5 @@
-use crate::h2::{
-    create_header_maps,
-    dfa::{Action, Dfa},
-    huffman,
-};
-use anyhow::{Result, bail};
+use crate::h2::{Action, create_header_maps, dfa::Dfa, huffman};
+use anyhow::Result;
 use as_bytes::AsBytes;
 use bytes::BytesMut;
 use libbpf_rs::{
@@ -21,7 +17,10 @@ pub struct Parser {
     dfa: Dfa,
 }
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/beeline.skel.rs"));
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/h2/parser.skel.rs"
+));
 
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {
@@ -138,10 +137,10 @@ impl Parser {
         Ok(())
     }
 
-    pub fn attach<'obj>(&self, target: i32) -> Result<(Link, Link, Link)> {
+    pub fn attach<'obj>(&self, target: i32) -> Result<(Link, Link)> {
         set_print(Some((PrintLevel::Debug, print)));
 
-        let skel_builder = BeelineSkelBuilder::default();
+        let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(&mut open_obj)?;
         if log_enabled!(log::Level::Debug) {
@@ -155,18 +154,12 @@ impl Parser {
 
         open_skel
             .progs
-            .parse_h1
-            .set_attach_target(target, Some("parse_h1".to_string()))?;
-
-        open_skel
-            .progs
             .extract_match
             .set_attach_target(target, Some("extract_match".to_string()))?;
 
         self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        let h1 = skel.progs.parse_h1.attach()?;
         let h2 = skel.progs.parse_h2.attach()?;
         let ms = skel.progs.extract_match.attach()?;
 
@@ -176,10 +169,10 @@ impl Parser {
 
         debug!("Beeline http/2 attached");
 
-        anyhow::Ok((h1, h2, ms))
+        anyhow::Ok((h2, ms))
     }
 
-    fn inject(&self, skel: &mut OpenBeelineSkel) -> Result<()> {
+    fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
         for (from, to, input, action) in self.iter_transitions() {
             let s = *from as usize;
             let data = skel.maps.rodata_data.as_mut().unwrap();

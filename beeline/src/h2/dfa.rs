@@ -1,3 +1,4 @@
+use crate::h2::Action;
 use anyhow::Result;
 use log::trace;
 use std::collections::{HashMap, HashSet};
@@ -188,27 +189,5 @@ impl Dfa {
         self.transitions
             .iter()
             .map(|((from, input), (to, action))| (from, to, input, action))
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
-    /// Capture a field value identified by the capture id
-    CaptureFieldValue(u8),
-
-    /// Terminates parsing
-    Done,
-
-    // No action
-    None,
-}
-
-impl Action {
-    pub fn is_some(&self) -> bool {
-        !self.is_none()
-    }
-
-    pub fn is_none(&self) -> bool {
-        matches!(self, Action::None)
     }
 }

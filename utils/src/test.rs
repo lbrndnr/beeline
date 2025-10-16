@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use as_bytes::AsBytes;
-use beeline::{h2::Parser, h2::dfa::Action};
+use beeline::h2::{Action, Parser};
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},

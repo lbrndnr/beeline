@@ -1,6 +1,23 @@
 use libbpf_cargo::SkeletonBuilder;
 use std::{env, ffi::OsStr, path::PathBuf};
 
+fn build_and_generate(dir: &PathBuf, log_level: u32) {
+    let src = dir.clone().join("parser.bpf.c");
+    println!("cargo:rerun-if-changed={src:?}");
+
+    let out = dir.clone().join("parser.skel.rs");
+    SkeletonBuilder::new()
+        .source(&src)
+        .clang_args([
+            OsStr::new("-D"),
+            OsStr::new(format!("BL_LOG_LEVEL={log_level}").as_str()),
+            OsStr::new("-I"),
+            OsStr::new("../include"),
+        ])
+        .build_and_generate(&out)
+        .unwrap();
+}
+
 fn main() {
     let manifest_dir =
         env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set in build script");
@@ -20,22 +37,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUST_LOG");
     println!("cargo:rerun-if-env-changed=BL_LOG");
 
-    let src = PathBuf::from(&manifest_dir)
-        .join("src")
-        .join("beeline.bpf.c");
-    println!("cargo:rerun-if-changed={src:?}");
+    let h1 = PathBuf::from(&manifest_dir).join("src").join("h1");
+    build_and_generate(&h1, log_level);
 
-    let out = PathBuf::from(&manifest_dir)
-        .join("src")
-        .join("beeline.skel.rs");
-    SkeletonBuilder::new()
-        .source(&src)
-        .clang_args([
-            OsStr::new("-D"),
-            OsStr::new(format!("BL_LOG_LEVEL={log_level}").as_str()),
-            OsStr::new("-I"),
-            OsStr::new("../include"),
-        ])
-        .build_and_generate(&out)
-        .unwrap();
+    let h2 = PathBuf::from(&manifest_dir).join("src").join("h2");
+    build_and_generate(&h2, log_level);
 }
