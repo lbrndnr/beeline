@@ -1,7 +1,7 @@
 use libbpf_cargo::SkeletonBuilder;
 use std::{env, ffi::OsStr, path::PathBuf};
 
-fn build_and_generate(dir: &PathBuf, log_level: u32) {
+fn build_and_generate(dir: &PathBuf, log_level: usize) {
     let src = dir.clone().join("parser.bpf.c");
     println!("cargo:rerun-if-changed={src:?}");
 
@@ -26,7 +26,7 @@ fn main() {
     let log_level = std::env::var("BL_LOG")
         .or(std::env::var("RUST_LOG"))
         .map(|s| s.to_lowercase());
-    let log_level: u32 = match log_level.as_deref() {
+    let log_level = match log_level.as_deref() {
         Ok("debug") => 2,
         Ok("trace") => 2,
         Ok("info") => 1,
@@ -42,4 +42,10 @@ fn main() {
 
     let h2 = PathBuf::from(&manifest_dir).join("src").join("h2");
     build_and_generate(&h2, log_level);
+
+    let hdr = PathBuf::from(&manifest_dir)
+        .join("..")
+        .join("include")
+        .join("beeline.h");
+    println!("cargo:rerun-if-env-changed={hdr:?}");
 }

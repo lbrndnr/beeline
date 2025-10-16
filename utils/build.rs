@@ -17,4 +17,10 @@ fn main() {
         .clang_args([OsStr::new("-I"), OsStr::new("../include")])
         .build_and_generate(&out)
         .unwrap();
+
+    let hdr = PathBuf::from(&manifest_dir)
+        .join("..")
+        .join("include")
+        .join("beeline.h");
+    println!("cargo:rerun-if-env-changed={hdr:?}");
 }
