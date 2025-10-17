@@ -48,8 +48,7 @@ struct ip4_conn {
 struct hdr_match {
     u16 idx;
     u16 len;
-    u8 src;
-    u32 sid;
+    bool in_msg;
 };
 
 struct hdr_str {
