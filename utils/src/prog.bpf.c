@@ -47,15 +47,13 @@ struct {
     __type(value, char[128]);
 } matches SEC(".maps");
 
-__noinline int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
+__noinline int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
     int ret = -1;
 
 	__sink(msg);
 	__sink(idx);
 	__sink(str);
 	__sink(ret);
-
-	bpf_msg_pull_data(msg, 0, msg->size, 0);
 
 	return ret;
 }

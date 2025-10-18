@@ -38,7 +38,7 @@ async fn start_echo<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<()> {
 }
 
 #[tokio::test]
-async fn it_parses_indexed_header_field() {
+async fn parse_indexed_header_field() {
     _ = env_logger::try_init();
 
     let server = start_echo(ECHO_ADDR).await;
@@ -79,7 +79,7 @@ async fn it_parses_indexed_header_field() {
 }
 
 #[tokio::test]
-async fn it_parses_literal_header_field_incremental_indexing_indexed() {
+async fn parse_literal_header_field_incremental_indexing_indexed() {
     _ = env_logger::try_init();
 
     let server = start_echo(ECHO_ADDR).await;
@@ -123,7 +123,7 @@ async fn it_parses_literal_header_field_incremental_indexing_indexed() {
 }
 
 #[tokio::test]
-async fn it_adds_literal_header_field_incremental_indexing_to_dynamic_table() {
+async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     _ = env_logger::try_init();
 
     let server = start_echo(ECHO_ADDR).await;

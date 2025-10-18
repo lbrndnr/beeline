@@ -118,9 +118,7 @@ int parse_h1(struct sk_msg_md *msg) {
 }
 
 SEC("freplace")
-int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
-    if (!msg || !str) return -1;
-
+int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
     struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
     if (m.len == 0) return -1;
 

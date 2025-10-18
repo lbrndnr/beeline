@@ -1,5 +1,6 @@
 #include "beeline.h"
 #include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
 #include <sys/cdefs.h>
 
 enum h2_parse_state {
@@ -113,9 +114,7 @@ static __always_inline u8* _extract_match(const struct sk_msg_md *msg, const str
 }
 
 SEC("freplace")
-int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str) {
-    if (!msg || !str) return -1;
-
+int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
     struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
     if (m.len == 0) return -1;
 
@@ -147,7 +146,7 @@ static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *act
     *action = t.action;
 }
 
-static __always_inline int _next_hpack(enum h2_parse_state *ps, u32 *n, u32 k) {
+static __always_inline u8 _next_hpack(enum h2_parse_state *ps, u32 *n, u32 k) {
     if (*ps == H2_IDX && *n == 7) {
         *ps = H2_IDX;
         *n = 7;
@@ -216,7 +215,6 @@ static __always_inline bool _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
             *k = c;
         }
         else {
-            bpf_log("parsing not done yet");
             *k += c * (1 << *m);
             *m += 7;
             return false;
@@ -226,9 +224,7 @@ static __always_inline bool _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     return true;
 }
 
-__noinline s8 _parse_table_entry(const struct sk_msg_md *msg, u16 *s, u32 idx, struct parse_res *pres) {
-    if (!msg || !pres || !s) return -1;
-
+__noinline __weak s8 _parse_table_entry(const struct sk_msg_md *msg, u16 *s __arg_nonnull, u32 idx, struct parse_res *pres __arg_nonnull) {
     struct header_field *hf = NULL;
     if (idx > 61) {
         struct dynamic_table_key key = { 0 };
@@ -270,7 +266,7 @@ __noinline s8 _parse_table_entry(const struct sk_msg_md *msg, u16 *s, u32 idx, s
     return -1;
 }
 
-static __noinline int _add_table_entry(const struct sk_msg_md *msg, u32 idx, const struct hdr_match *key, const struct hdr_match *val) {
+__noinline __weak int _add_table_entry(const struct sk_msg_md *msg, u32 idx, const struct hdr_match *key __arg_nonnull, const struct hdr_match *val __arg_nonnull) {
     u8 *key_ptr = _extract_match(msg, key, true);
     u8 *val_ptr = _extract_match(msg, val, false);
     if (!key_ptr || !val_ptr) return -1;
@@ -305,11 +301,12 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
     u32 stream_id = data[5] << 24 | data[6] << 16 | data[7] << 8 | data[8];
 
     u32 n = 0, m = 0;
-    u32 i = 0, j = 0, k = 0;
+    u32 i = 0, k = 0;
+    u8 j = 0;
     s8 cid = -1;
     u32 dt_idx = 62;
     enum h2_parse_state ps = H2_IDX;
-    struct hdr_match key = { 0 };
+    struct hdr_match key = { 0 }, val = { 0 };
 
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
@@ -317,7 +314,6 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
 
         if (j == 0) {
             bool done = _parse_hpack(c, &ps, &n, &m, &k);
-
             if (done && ps == H2_IDX) {
                 bpf_log("parsed idx: %d", k);
 
@@ -328,6 +324,7 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
                     .len = 0,
                     .in_msg = (k == 64),
                 };
+                val = (struct hdr_match) { 0 };
             }
             else if (done && ps == H2_KEY_LEN) {
                 key.len = k;
@@ -335,13 +332,11 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
             else if (done && ps == H2_VAL_LEN && cid >= 0) {
                 // check if we need to add current hf to dynamic table
                 if (key.idx > 0) {
-                    struct hdr_match val = {
+                    val = (struct hdr_match) {
                         .idx = i + 1,
                         .len = k,
                         .in_msg = true,
                     };
-
-                    _add_table_entry(msg, dt_idx, &key, &val);
                 }
 
                 bpf_log("capture: %d {%d, %d}", cid, i, k);
@@ -352,7 +347,12 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
                 };
                 cid = -1;
             }
-            j = _next_hpack(&ps, &n, k) & 0xFF;
+
+            if (key.idx > 0 && val.idx > 0) {
+                _add_table_entry(msg, dt_idx, &key, &val);
+            }
+
+            j = _next_hpack(&ps, &n, k);
         }
         else {
             j--;
@@ -364,8 +364,6 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
 
 SEC("freplace")
 int parse_h2(struct sk_msg_md *msg) {
-    if (!msg) return -1;
-
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
 
