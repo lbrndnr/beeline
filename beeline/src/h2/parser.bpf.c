@@ -19,9 +19,11 @@ struct header_field {
     u8 val[32];
 };
 
+#define STATIC_TABLE_SIZE 61
+
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 62);
+    __uint(max_entries, STATIC_TABLE_SIZE+1);
     __type(key, u32);
     __type(value, struct header_field);
 } static_table SEC(".maps");
@@ -37,6 +39,18 @@ struct {
     __type(key, struct dynamic_table_key);
 	__type(value, struct header_field);
 } dynamic_table SEC(".maps");
+
+struct dynamic_table_info {
+    u16 current_size;
+    u16 max_size;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, struct ip4_conn);
+	__type(value, struct dynamic_table_info);
+} dynamic_table_info SEC(".maps");
 
 const u16 a_done = 1 << 14;
 const u16 a_start_capture = 1 << 13;
@@ -70,8 +84,8 @@ struct parse_res {
 
 struct parse_res parse_res = { 0 };
 
-static __always_inline void new_table_key(const struct sk_msg_md *msg, u32 idx, struct dynamic_table_key *key) {
-    struct ip4_conn conn = {
+static __always_inline void new_ip4conn(const struct sk_msg_md *msg, struct ip4_conn *conn) {
+    *conn = (struct ip4_conn) {
         .local = {
             .ip4 = msg->local_ip4,
             .port = msg->local_port
@@ -81,11 +95,14 @@ static __always_inline void new_table_key(const struct sk_msg_md *msg, u32 idx, 
             .port = bpf_ntohl(msg->remote_port)
         }
     };
+}
 
-    *key = (struct dynamic_table_key){
-        .conn = conn,
+static __always_inline void new_table_key(const struct sk_msg_md *msg, u32 idx, struct dynamic_table_key *key) {
+    *key = (struct dynamic_table_key) {
+        .conn = { 0 },
         .idx = idx
     };
+    new_ip4conn(msg, &key->conn);
 }
 
 static __always_inline u8* _extract_match(const struct sk_msg_md *msg, const struct hdr_match *m, bool is_key) {
@@ -97,10 +114,8 @@ static __always_inline u8* _extract_match(const struct sk_msg_md *msg, const str
         return data + m->idx;
     }
 
-    bpf_log("extract: %d", m->idx);
-
     struct header_field *hf = NULL;
-    if (m->idx > 61) {
+    if (m->idx > STATIC_TABLE_SIZE) {
         struct dynamic_table_key key = { 0 };
         new_table_key(msg, m->idx, &key);
         hf = bpf_map_lookup_elem(&dynamic_table, &key);
@@ -226,7 +241,7 @@ static __always_inline bool _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
 
 __noinline __weak s8 _parse_table_entry(const struct sk_msg_md *msg, u16 *s __arg_nonnull, u32 idx, struct parse_res *pres __arg_nonnull) {
     struct header_field *hf = NULL;
-    if (idx > 61) {
+    if (idx > STATIC_TABLE_SIZE) {
         struct dynamic_table_key key = { 0 };
         new_table_key(msg, idx, &key);
         hf = bpf_map_lookup_elem(&dynamic_table, &key);
@@ -275,11 +290,14 @@ __noinline __weak int _add_table_entry(const struct sk_msg_md *msg, u32 idx, con
     new_table_key(msg, idx, &dt_key);
 
     struct header_field dt_val = { 0 };
-    bpf_probe_read_kernel(dt_val.key, 32, key_ptr);
-    bpf_probe_read_kernel(dt_val.val, 32, val_ptr);
+    u16 key_len = (key->in_msg) ? key->len & 0x1F : 0x1F;
+    bpf_probe_read_kernel(dt_val.key, key_len, key_ptr);
+    bpf_probe_read_kernel(dt_val.val, val->len & 0x1F, val_ptr);
 
     bpf_map_update_elem(&dynamic_table, &dt_key, &dt_val, BPF_ANY);
     bpf_log("add to dynamic table: %d", idx);
+    bpf_log("key { %d %d %d}", key->idx, key->len, key->in_msg);
+    bpf_log("val { %d %d %d}", val->idx, val->len, val->in_msg);
 
     return 0;
 }
@@ -300,13 +318,26 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
     u8 flags = data[4];
     u32 stream_id = data[5] << 24 | data[6] << 16 | data[7] << 8 | data[8];
 
+    struct ip4_conn conn = { 0 };
+    new_ip4conn(msg, &conn);
+    struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &conn);
+    if (!dt_info) {
+        struct dynamic_table_info new_info = {
+            .current_size = 0,
+            .max_size = 100,
+        };
+        bpf_map_update_elem(&dynamic_table_info, &conn, &new_info, BPF_ANY);
+
+        dt_info = bpf_map_lookup_elem(&dynamic_table_info, &conn);
+        if (!dt_info) return -1;
+    }
+
     u32 n = 0, m = 0;
     u32 i = 0, k = 0;
     u8 j = 0;
     s8 cid = -1;
-    u32 dt_idx = 62;
     enum h2_parse_state ps = H2_IDX;
-    struct hdr_match key = { 0 }, val = { 0 };
+    struct hdr_match key = { 0 };
 
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
@@ -324,7 +355,6 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
                     .len = 0,
                     .in_msg = (k == 64),
                 };
-                val = (struct hdr_match) { 0 };
             }
             else if (done && ps == H2_KEY_LEN) {
                 key.len = k;
@@ -332,11 +362,15 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
             else if (done && ps == H2_VAL_LEN && cid >= 0) {
                 // check if we need to add current hf to dynamic table
                 if (key.idx > 0) {
-                    val = (struct hdr_match) {
+                    struct hdr_match val = (struct hdr_match) {
                         .idx = i + 1,
                         .len = k,
                         .in_msg = true,
                     };
+
+                    if (_add_table_entry(msg, dt_info->current_size + STATIC_TABLE_SIZE + 1, &key, &val) == 0) {
+                        dt_info->current_size += 1;
+                    }
                 }
 
                 bpf_log("capture: %d {%d, %d}", cid, i, k);
@@ -346,10 +380,6 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
                     .in_msg = true,
                 };
                 cid = -1;
-            }
-
-            if (key.idx > 0 && val.idx > 0) {
-                _add_table_entry(msg, dt_idx, &key, &val);
             }
 
             j = _next_hpack(&ps, &n, k);

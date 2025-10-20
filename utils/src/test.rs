@@ -101,7 +101,14 @@ impl<'obj> TestProgram<'obj> {
 
         let key = idx as u32;
         let key = unsafe { key.as_bytes() };
-        Ok(map.lookup(&key, MapFlags::empty())?)
+        let val = map.lookup(&key, MapFlags::empty())?;
+
+        if let Some(val) = val {
+            let val = val.iter().take_while(|&k| *k != 0).cloned().collect();
+            Ok(Some(val))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn prog_fd(&self) -> i32 {

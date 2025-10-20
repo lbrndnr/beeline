@@ -47,8 +47,7 @@ async fn parse_indexed_header_field() {
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
     let mut parser = Parser::new();
-    // parser.match_preface().expect("match preface");
-    parser.match_http_hdr("method").expect("match method");
+    parser.capture_http_hdr("method").expect("match method");
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
     let client = Client::builder()
@@ -88,9 +87,8 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
 
     let mut parser = Parser::new();
-    // parser.match_preface().expect("match preface");
     parser
-        .match_http_hdr("user-agent")
+        .capture_http_hdr("user-agent")
         .expect("match user-agent");
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
@@ -107,13 +105,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
     assert_eq!(resp.status(), 200);
     assert_eq!(
-        prog.get_match(0)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .take(5)
-            .copied()
-            .collect::<Vec<u8>>(),
+        prog.get_match(0).unwrap().unwrap(),
         vec![140, 165, 160, 213, 23] // "beeline" huffman encoded
     );
 
@@ -132,10 +124,14 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
 
     let mut parser = Parser::new();
-    // parser.match_preface().expect("match preface");
     parser
-        .match_http_hdr("user-agent")
+        .capture_http_hdr("user-agent")
         .expect("match user-agent");
+
+    parser
+        .capture_http_hdr("accept-language")
+        .expect("match accept-language");
+
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
     let client = Client::builder()
@@ -145,40 +141,38 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
         .header(header::USER_AGENT, "beeline")
+        .header(header::ACCEPT_LANGUAGE, "sumsum")
         .send()
         .await
         .expect("request");
 
     assert_eq!(resp.status(), 200);
     assert_eq!(
-        prog.get_match(0)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .take(5)
-            .copied()
-            .collect::<Vec<u8>>(),
+        prog.get_match(0).unwrap().unwrap(),
         vec![140, 165, 160, 213, 23] // "beeline" huffman encoded
+    );
+    assert_eq!(
+        prog.get_match(1).unwrap().unwrap(),
+        vec![69, 180, 162, 218, 127] // "sumsum" huffman encoded
     );
 
     // we repeat this request to check if the header has been added to the dynamic table
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
         .header(header::USER_AGENT, "beeline")
+        .header(header::ACCEPT_LANGUAGE, "sumsum")
         .send()
         .await
         .expect("request");
 
     assert_eq!(resp.status(), 200);
     assert_eq!(
-        prog.get_match(0)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .take(5)
-            .copied()
-            .collect::<Vec<u8>>(),
+        prog.get_match(0).unwrap().unwrap(),
         vec![140, 165, 160, 213, 23] // "beeline" huffman encoded
+    );
+    assert_eq!(
+        prog.get_match(1).unwrap().unwrap(),
+        vec![69, 180, 162, 218, 127] // "sumsum" huffman encoded
     );
 
     drop(server);

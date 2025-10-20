@@ -55,21 +55,7 @@ impl Parser {
         }
     }
 
-    // pub fn match_preface(&mut self) -> Result<()> {
-    //     self.dfa
-    //         .start_pattern(self.s_init)
-    //         .start_capturing()
-    //         .push("PRI * HTTP/2.0")?
-    //         .push(CRLF)?
-    //         .push(CRLF)?
-    //         .end_capturing("SM")?
-    //         .push(CRLF)?
-    //         .done_on(CRLF)?;
-
-    //     Ok(())
-    // }
-
-    pub fn match_http_hdr(&mut self, key: &str) -> Result<()> {
+    pub fn capture_http_hdr(&mut self, key: &str) -> Result<()> {
         let mut key_encoded = BytesMut::with_capacity(key.len());
         huffman::encode(key.as_bytes(), &mut key_encoded);
 
