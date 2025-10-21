@@ -78,6 +78,43 @@ async fn parse_indexed_header_field() {
 }
 
 #[tokio::test]
+async fn parse_literal_header_field_no_indexing_indexed() {
+    _ = env_logger::try_init();
+
+    let server = start_echo(ECHO_ADDR).await;
+
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+
+    let mut parser = Parser::new();
+    parser
+        .capture_http_hdr("authorization")
+        .expect("match authorization");
+    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+
+    let client = Client::builder()
+        .http2_prior_knowledge()
+        .build()
+        .expect("client");
+    let resp = client
+        .get(format!("http://{}", ECHO_ADDR))
+        .basic_auth("beeline", Some("beeline"))
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        prog.get_match(0).unwrap().unwrap(),
+        vec![140, 165, 160, 213, 23] // "Basic beeline:beeline" base64 and huffman encoded
+    );
+
+    drop(server);
+    drop(prog);
+    drop(parser);
+}
+
+#[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_indexed() {
     _ = env_logger::try_init();
 
