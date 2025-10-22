@@ -128,7 +128,7 @@ static __always_inline u8* _extract_match(const struct sk_msg_md *msg, const str
     }
 
     if (hf == NULL) return NULL;
-    barrier();
+    barrier(); // this is needed so that clang doesn't reorder the null check
     return (is_key) ? hf->key : hf->val;
 }
 
@@ -381,9 +381,11 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
             *s = s_any;
             cid = _parse_table_entry(msg, s, k, pres);
             key.idx = k;
+            key.in_msg = false;
         }
         else if (ps == H2_KEY_LEN) {
             key.len = k;
+            key.in_msg = true;
         }
         else if (ps == H2_VAL_LEN && cid >= 0) {
             struct hdr_match val = (struct hdr_match) {
