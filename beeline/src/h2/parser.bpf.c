@@ -128,18 +128,17 @@ static __always_inline u8* _extract_match(const struct sk_msg_md *msg, const str
     }
 
     if (hf == NULL) return NULL;
+    barrier();
     return (is_key) ? hf->key : hf->val;
 }
 
 SEC("freplace")
 int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
     struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
-    bpf_log("extract_match: %d -> {%d, %d, %d}", idx, m.idx, m.len, m.in_msg);
     if (m.len == 0) return -1;
 
     u8 *ptr = _extract_match(msg, &m, false);
-    bpf_log("--> %p", ptr);
-    if (!ptr) return -1;
+    if (ptr == NULL) return -1;
 
     *str = (struct hdr_str) {
         .len = m.len,
