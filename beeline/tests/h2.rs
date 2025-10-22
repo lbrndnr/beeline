@@ -188,8 +188,8 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     // we repeat this request to check if the header has been added to the dynamic table
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
-        .header(header::USER_AGENT, "beeline")
-        .header(header::ACCEPT_LANGUAGE, "sumsum")
+        .header(header::ACCEPT_LANGUAGE, lang)
+        .header(header::USER_AGENT, user_agent)
         .send()
         .await
         .expect("request");
