@@ -7,10 +7,18 @@ use axum::{
     routing::get,
 };
 use beeline::h2::Parser;
+use httlib_huffman::encode;
 use reqwest::{Client, header};
 use utils::test::{OpenObject, TestProgram};
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
+
+fn assert_match_eq(prog: &TestProgram, idx: usize, expected: &str) {
+    let mut expected_hf = Vec::new();
+    encode(&expected.as_bytes(), &mut expected_hf).unwrap();
+
+    assert_eq!(prog.get_match(idx).unwrap().unwrap(), expected_hf);
+}
 
 async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
     if let Ok(body) = String::from_utf8(body.to_vec()) {
@@ -61,16 +69,7 @@ async fn parse_indexed_header_field() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_eq!(
-        prog.get_match(0)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .take(3)
-            .copied()
-            .collect::<Vec<u8>>(),
-        vec![197, 131, 127] // "get" huffman encoded
-    );
+    assert_match_eq(&prog, 0, "GET");
 
     drop(server);
     drop(prog);
@@ -104,10 +103,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_eq!(
-        prog.get_match(0).unwrap().unwrap(),
-        vec![140, 165, 160, 213, 23] // "Basic beeline:beeline" base64 and huffman encoded
-    );
+    assert_match_eq(&prog, 0, "Basic beeline:beeline");
 
     drop(server);
     drop(prog);
@@ -133,18 +129,17 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
         .http2_prior_knowledge()
         .build()
         .expect("client");
+
+    let user_agent = "beeline";
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
-        .header(header::USER_AGENT, "beeline")
+        .header(header::USER_AGENT, user_agent)
         .send()
         .await
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_eq!(
-        prog.get_match(0).unwrap().unwrap(),
-        vec![140, 165, 160, 213, 23] // "beeline" huffman encoded
-    );
+    assert_match_eq(&prog, 0, user_agent);
 
     drop(server);
     drop(prog);
@@ -175,23 +170,20 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
         .http2_prior_knowledge()
         .build()
         .expect("client");
+
+    let user_agent = "beeline";
+    let lang = "sumsum";
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
-        .header(header::USER_AGENT, "beeline")
-        .header(header::ACCEPT_LANGUAGE, "sumsum")
+        .header(header::USER_AGENT, user_agent)
+        .header(header::ACCEPT_LANGUAGE, lang)
         .send()
         .await
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_eq!(
-        prog.get_match(0).unwrap().unwrap(),
-        vec![140, 165, 160, 213, 23] // "beeline" huffman encoded
-    );
-    assert_eq!(
-        prog.get_match(1).unwrap().unwrap(),
-        vec![69, 180, 162, 218, 127] // "sumsum" huffman encoded
-    );
+    assert_match_eq(&prog, 0, user_agent);
+    assert_match_eq(&prog, 1, lang);
 
     // we repeat this request to check if the header has been added to the dynamic table
     let resp = client
@@ -203,14 +195,8 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_eq!(
-        prog.get_match(0).unwrap().unwrap(),
-        vec![140, 165, 160, 213, 23] // "beeline" huffman encoded
-    );
-    assert_eq!(
-        prog.get_match(1).unwrap().unwrap(),
-        vec![69, 180, 162, 218, 127] // "sumsum" huffman encoded
-    );
+    assert_match_eq(&prog, 0, user_agent);
+    assert_match_eq(&prog, 1, lang);
 
     drop(server);
     drop(prog);

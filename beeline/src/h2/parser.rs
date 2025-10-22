@@ -1,7 +1,8 @@
-use crate::h2::{Action, create_header_maps, dfa::Dfa, huffman};
+use crate::h2::{Action, create_header_maps, dfa::Dfa};
 use anyhow::Result;
 use as_bytes::AsBytes;
 use bytes::BytesMut;
+use httlib_huffman::encode;
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
@@ -56,8 +57,8 @@ impl Parser {
     }
 
     pub fn capture_http_hdr(&mut self, key: &str) -> Result<()> {
-        let mut key_encoded = BytesMut::with_capacity(key.len());
-        huffman::encode(key.as_bytes(), &mut key_encoded);
+        let mut key_encoded = Vec::new();
+        encode(key.as_bytes(), &mut key_encoded)?;
 
         self.dfa
             .start_pattern(self.s_any)
@@ -79,17 +80,14 @@ impl Parser {
 
     fn populate_static_table(&self, static_table: &MapHandle) -> Result<()> {
         let insert = |idx: u32, key: &str, val: Option<&str>| {
-            let mut hf_key = BytesMut::with_capacity(key.len());
-            huffman::encode(key.as_bytes(), &mut hf_key);
+            let mut hf_key = Vec::new();
+            encode(key.as_bytes(), &mut hf_key)?;
 
             let val_len = val.map(|v| v.len()).unwrap_or(0);
-            let mut hf_val = BytesMut::with_capacity(val_len);
+            let mut hf_val = Vec::new();
             if let Some(val) = val {
-                huffman::encode(val.as_bytes(), &mut hf_val);
+                encode(val.as_bytes(), &mut hf_val)?;
             }
-
-            let mut hf_key = hf_key.to_vec();
-            let mut hf_val = hf_val.to_vec();
 
             hf_key.resize(32, 0);
             hf_val.resize(32, 0);

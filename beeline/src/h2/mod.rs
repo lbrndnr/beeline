@@ -4,9 +4,6 @@ mod dfa;
 mod parser;
 pub use parser::Parser;
 
-#[allow(dead_code)]
-mod huffman;
-
 fn create_header_maps() -> (
     HashMap<String, usize>,
     HashMap<String, HashMap<String, usize>>,
