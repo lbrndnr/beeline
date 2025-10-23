@@ -7,17 +7,19 @@ use axum::{
     routing::get,
 };
 use beeline::h2::Parser;
-use httlib_huffman::encode;
+use httlib_huffman as huffman;
 use reqwest::{Client, header};
 use utils::test::{OpenObject, TestProgram};
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
 
 fn assert_match_eq(prog: &TestProgram, idx: usize, expected: &str) {
-    let mut expected_hf = Vec::new();
-    encode(&expected.as_bytes(), &mut expected_hf).unwrap();
+    let actual_hf = prog.get_match(idx).unwrap().unwrap();
+    let mut actual = Vec::new();
+    huffman::decode(&actual_hf, &mut actual, huffman::DecoderSpeed::OneBit).unwrap();
+    let actual = String::from_utf8(actual).unwrap();
 
-    assert_eq!(prog.get_match(idx).unwrap().unwrap(), expected_hf);
+    assert_eq!(actual.as_str(), expected);
 }
 
 async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
@@ -103,7 +105,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, "Basic beeline:beeline");
+    assert_match_eq(&prog, 0, "Basic YmVlbGluZTpiZWVsaW5l"); // beeline:beeline in base64
 
     drop(server);
     drop(prog);
