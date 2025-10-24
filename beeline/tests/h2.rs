@@ -17,8 +17,15 @@ fn assert_match_eq(prog: &TestProgram, idx: usize, expected: &str) {
     assert_eq!(actual.as_str(), expected);
 }
 
+fn build_client() -> Client {
+    Client::builder()
+        .http2_prior_knowledge()
+        .build()
+        .expect("client")
+}
+
 #[tokio::test]
-async fn parse_indexed_header_field() {
+async fn h2_parse_indexed_header_field() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -30,10 +37,7 @@ async fn parse_indexed_header_field() {
     parser.capture_http_hdr("method").expect("match method");
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
-    let client = Client::builder()
-        .http2_prior_knowledge()
-        .build()
-        .expect("client");
+    let client = build_client();
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
         .send()
@@ -49,7 +53,7 @@ async fn parse_indexed_header_field() {
 }
 
 #[tokio::test]
-async fn parse_literal_header_field_no_indexing_indexed() {
+async fn h2_parse_literal_header_field_no_indexing_indexed() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -63,10 +67,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
         .expect("match authorization");
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
-    let client = Client::builder()
-        .http2_prior_knowledge()
-        .build()
-        .expect("client");
+    let client = build_client();
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
         .basic_auth("beeline", Some("beeline"))
@@ -83,7 +84,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 }
 
 #[tokio::test]
-async fn parse_literal_header_field_incremental_indexing_indexed() {
+async fn h2_parse_literal_header_field_incremental_indexing_indexed() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -97,11 +98,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
         .expect("match user-agent");
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
-    let client = Client::builder()
-        .http2_prior_knowledge()
-        .build()
-        .expect("client");
-
+    let client = build_client();
     let user_agent = "beeline";
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
@@ -119,7 +116,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 }
 
 #[tokio::test]
-async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
+async fn h2_parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -131,18 +128,12 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     parser
         .capture_http_hdr("user-agent")
         .expect("match user-agent");
-
     parser
         .capture_http_hdr("accept-language")
         .expect("match accept-language");
-
     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
-    let client = Client::builder()
-        .http2_prior_knowledge()
-        .build()
-        .expect("client");
-
+    let client = build_client();
     let user_agent = "beeline";
     let lang = "sumsum";
     let resp = client

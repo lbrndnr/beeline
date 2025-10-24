@@ -98,6 +98,8 @@ int msg_verdict(struct sk_msg_md *msg) {
     bpf_printk("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
 
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
+    bool store_matches = false;
+
     if (is_h2) {
         int done_idx = parse_h2(msg);
         if (done_idx < 0) {
@@ -105,37 +107,41 @@ int msg_verdict(struct sk_msg_md *msg) {
             return SK_PASS;
         }
 
-        // only store matches if we parsed a HEADER frame
-        if (done_idx > 9) {
-            u32 i = 0;
-            bpf_for(i, 0, 32) {
-                struct hdr_str str = { 0 };
-                if (extract_match(msg, i, &str) == 0) {
-                    u16 len = str.len;
-                    if (len > 128) len = 128;
-
-                    char tmp[128] = {0};
-                    bpf_probe_read_kernel(tmp, len, str.ptr);
-                    bpf_map_update_elem(&matches, &i, tmp, BPF_ANY);
-                }
-                else {
-                    bpf_map_delete_elem(&matches, &i);
-                }
-            }
-        }
+        store_matches = (done_idx > 9);
     }
     else {
         int done_idx = parse_h1(msg);
-        // if (done_idx < 0) {
-        //     bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
-        //     return SK_PASS;
-        // }
+        if (done_idx < 0) {
+            bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
+            return SK_PASS;
+        }
 
         // if (ms[0].idx == 0 && ms[0].len == 19) {
             int flag = 1;
             bpf_map_update_elem(&upgraded_conns, &ikey, &flag, BPF_ANY);
             num_upgraded_conns += 1;
         // }
+
+        store_matches = true;
+    }
+
+    // only store matches if we parsed a HEADER frame
+    if (store_matches) {
+        u32 i = 0;
+        bpf_for(i, 0, 32) {
+            struct hdr_str str = { 0 };
+            if (extract_match(msg, i, &str) == 0) {
+                u16 len = str.len;
+                if (len > 128) len = 128;
+
+                char tmp[128] = {0};
+                bpf_probe_read_kernel(tmp, len, str.ptr);
+                bpf_map_update_elem(&matches, &i, tmp, BPF_ANY);
+            }
+            else {
+                bpf_map_delete_elem(&matches, &i);
+            }
+        }
     }
 
     return SK_PASS;
