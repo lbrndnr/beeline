@@ -81,13 +81,71 @@ async fn parse_simple_header() {
 }
 
 #[tokio::test]
-async fn parse_malformed_header() {
-    // request with "UsEr-aGgEnT: beeline"
+async fn ignore_header_case() {
+    _ = env_logger::try_init();
 
-    // request with "user-agent   : beeline"
+    let server = server::launch(ECHO_ADDR).await;
 
-    // request with "user-agent:beeline"
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+
+    let mut parser = Parser::new();
+    parser
+        .match_http_hdr("user-agent")
+        .expect("match user-agent");
+    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+
+    let client = build_client();
+    let user_agent = "beeline";
+    let resp = client
+        .get(format!("http://{}", ECHO_ADDR))
+        .header("UsEr-aGEnT", user_agent)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    assert_match_eq(&prog, 0, user_agent);
+
+    drop(server);
+    drop(prog);
+    drop(parser);
 }
 
+// request with "user-agent   : beeline"
+// request with "user-agent:beeline"
+//
+// #[tokio::test]
+// async fn ignores_header_whitespace() {
+//     _ = env_logger::try_init();
+
+//     let server = server::launch(ECHO_ADDR).await;
+
+//     let mut open_obj = OpenObject::new();
+//     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+
+//     let mut parser = Parser::new();
+//     parser
+//         .match_http_hdr("user-agent")
+//         .expect("match user-agent");
+//     let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+
+//     let client = build_client();
+//     let user_agent = "beeline";
+//     let resp = client
+//         .get(format!("http://{}", ECHO_ADDR))
+//         .header("UsEr-aGEnT", user_agent)
+//         .send()
+//         .await
+//         .expect("request");
+
+//     assert_eq!(resp.status(), 200);
+//     assert_match_eq(&prog, 0, user_agent);
+
+//     drop(server);
+//     drop(prog);
+//     drop(parser);
+// }
+
 #[tokio::test]
-async fn parse_multiple_headers() {}
+async fn parse_subsequent_headers() {}
