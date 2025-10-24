@@ -82,7 +82,6 @@ impl Parser {
             let mut hf_key = Vec::new();
             huffman::encode(key.as_bytes(), &mut hf_key)?;
 
-            let val_len = val.map(|v| v.len()).unwrap_or(0);
             let mut hf_val = Vec::new();
             if let Some(val) = val {
                 huffman::encode(val.as_bytes(), &mut hf_val)?;

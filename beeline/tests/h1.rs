@@ -1,47 +1,17 @@
-use anyhow::Result;
-use axum::{
-    Router,
-    body::Bytes,
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
-    routing::get,
-};
 use beeline::h1::Parser;
 use reqwest::Client;
-use utils::test::{OpenObject, TestProgram};
+use utils::{
+    server,
+    test::{OpenObject, TestProgram},
+};
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
-
-async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
-    if let Ok(body) = String::from_utf8(body.to_vec()) {
-        Ok((headers, body))
-    } else {
-        Err(StatusCode::BAD_REQUEST)
-    }
-}
-
-async fn start_echo<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<()> {
-    let app = Router::new().route(
-        "/",
-        get(move |_: HeaderMap, body: Bytes| {
-            let res_hdrs = HeaderMap::new();
-            echo(res_hdrs, body)
-        }),
-    );
-
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    Ok(())
-}
 
 #[tokio::test]
 async fn it_matches_h2_preface() {
     _ = env_logger::try_init();
 
-    let server = start_echo(ECHO_ADDR).await;
+    let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");

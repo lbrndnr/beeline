@@ -188,7 +188,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "as-bytes",
- "axum",
  "bytes",
  "env_logger",
  "httlib-huffman",
@@ -1857,12 +1856,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "as-bytes",
+ "axum",
  "beeline",
  "bytes",
  "libbpf-cargo",
  "libbpf-rs",
  "libc",
  "log",
+ "tokio",
 ]
 
 [[package]]

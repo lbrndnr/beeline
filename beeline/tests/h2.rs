@@ -1,15 +1,10 @@
-use anyhow::Result;
-use axum::{
-    Router,
-    body::Bytes,
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
-    routing::get,
-};
 use beeline::h2::Parser;
 use httlib_huffman as huffman;
 use reqwest::{Client, header};
-use utils::test::{OpenObject, TestProgram};
+use utils::{
+    server,
+    test::{OpenObject, TestProgram},
+};
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
 
@@ -22,36 +17,11 @@ fn assert_match_eq(prog: &TestProgram, idx: usize, expected: &str) {
     assert_eq!(actual.as_str(), expected);
 }
 
-async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
-    if let Ok(body) = String::from_utf8(body.to_vec()) {
-        Ok((headers, body))
-    } else {
-        Err(StatusCode::BAD_REQUEST)
-    }
-}
-
-async fn start_echo<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<()> {
-    let app = Router::new().route(
-        "/",
-        get(move |_: HeaderMap, body: Bytes| {
-            let res_hdrs = HeaderMap::new();
-            echo(res_hdrs, body)
-        }),
-    );
-
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    Ok(())
-}
-
 #[tokio::test]
 async fn parse_indexed_header_field() {
     _ = env_logger::try_init();
 
-    let server = start_echo(ECHO_ADDR).await;
+    let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
@@ -82,7 +52,7 @@ async fn parse_indexed_header_field() {
 async fn parse_literal_header_field_no_indexing_indexed() {
     _ = env_logger::try_init();
 
-    let server = start_echo(ECHO_ADDR).await;
+    let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
@@ -116,7 +86,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 async fn parse_literal_header_field_incremental_indexing_indexed() {
     _ = env_logger::try_init();
 
-    let server = start_echo(ECHO_ADDR).await;
+    let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
@@ -152,7 +122,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     _ = env_logger::try_init();
 
-    let server = start_echo(ECHO_ADDR).await;
+    let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
