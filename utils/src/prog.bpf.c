@@ -111,10 +111,10 @@ int msg_verdict(struct sk_msg_md *msg) {
     }
     else {
         int done_idx = parse_h1(msg);
-        // if (done_idx < 0) {
-        //     bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
-        //     return SK_PASS;
-        // }
+        if (done_idx < 0) {
+            bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
+            return SK_PASS;
+        }
 
         // if (ms[0].idx == 0 && ms[0].len == 19) {
             int flag = 1;

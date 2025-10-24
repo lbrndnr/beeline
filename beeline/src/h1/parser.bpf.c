@@ -85,7 +85,7 @@ static __always_inline int _parse_h1_from(const struct sk_msg_md *msg, u16 start
 
             ms[rid] = (struct hdr_match) {
                 .idx = cidx[cid],
-                .len = i - cidx[cid],
+                .len = i - cidx[cid] -1,
                 .in_msg = true
             };
 

@@ -45,6 +45,7 @@ async fn match_h2_preface() {
 
     drop(server);
     drop(prog);
+    drop(parser);
 }
 
 #[tokio::test]
