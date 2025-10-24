@@ -48,7 +48,7 @@ async fn h1_match_h2_preface() {
 }
 
 #[tokio::test]
-async fn h1_parse_header_ok() {
+async fn h1_parse_header_simple() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
