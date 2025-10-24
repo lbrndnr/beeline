@@ -19,7 +19,7 @@ fn build_client() -> Client {
 }
 
 #[tokio::test]
-async fn h1_match_h2_preface() {
+async fn match_h2_preface() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -48,7 +48,7 @@ async fn h1_match_h2_preface() {
 }
 
 #[tokio::test]
-async fn h1_parse_header_simple() {
+async fn parse_simple_header() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -80,7 +80,7 @@ async fn h1_parse_header_simple() {
 }
 
 #[tokio::test]
-async fn h1_parse_header_malformed() {
+async fn parse_malformed_header() {
     // request with "UsEr-aGgEnT: beeline"
 
     // request with "user-agent   : beeline"
@@ -89,4 +89,4 @@ async fn h1_parse_header_malformed() {
 }
 
 #[tokio::test]
-async fn h1_parse_multiple_headers() {}
+async fn parse_multiple_headers() {}

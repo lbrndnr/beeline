@@ -1,7 +1,6 @@
 #include "beeline.h"
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
-#include <sys/cdefs.h>
 
 enum h2_parse_state {
     // integers

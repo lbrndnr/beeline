@@ -25,7 +25,7 @@ fn build_client() -> Client {
 }
 
 #[tokio::test]
-async fn h2_parse_indexed_header_field() {
+async fn parse_indexed_header_field() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -53,7 +53,7 @@ async fn h2_parse_indexed_header_field() {
 }
 
 #[tokio::test]
-async fn h2_parse_literal_header_field_no_indexing_indexed() {
+async fn parse_literal_header_field_no_indexing_indexed() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -84,7 +84,7 @@ async fn h2_parse_literal_header_field_no_indexing_indexed() {
 }
 
 #[tokio::test]
-async fn h2_parse_literal_header_field_incremental_indexing_indexed() {
+async fn parse_literal_header_field_incremental_indexing_indexed() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
@@ -116,7 +116,7 @@ async fn h2_parse_literal_header_field_incremental_indexing_indexed() {
 }
 
 #[tokio::test]
-async fn h2_parse_literal_header_field_incremental_indexing_in_dynamic_table() {
+async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     _ = env_logger::try_init();
 
     let server = server::launch(ECHO_ADDR).await;
