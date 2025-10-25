@@ -119,7 +119,7 @@ impl Parser {
         Ok(())
     }
 
-    pub fn attach<'obj>(&self, target: i32) -> Result<(Link, Link)> {
+    pub fn attach<'obj>(&self, target: i32) -> Result<(Link, Link, Link)> {
         set_print(Some((PrintLevel::Debug, print)));
 
         let skel_builder = ParserSkelBuilder::default();
@@ -136,14 +136,20 @@ impl Parser {
 
         open_skel
             .progs
+            .matched
+            .set_attach_target(target, Some("matched".to_string()))?;
+
+        open_skel
+            .progs
             .extract_match
             .set_attach_target(target, Some("extract_match".to_string()))?;
 
         self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        let h2 = skel.progs.parse_h2.attach()?;
-        let ms = skel.progs.extract_match.attach()?;
+        let parse = skel.progs.parse_h2.attach()?;
+        let matched = skel.progs.matched.attach()?;
+        let extract = skel.progs.extract_match.attach()?;
 
         let id = skel.maps.static_table.info()?.info.id;
         let static_table = MapHandle::from_map_id(id)?;
@@ -151,7 +157,7 @@ impl Parser {
 
         debug!("Beeline http/2 attached");
 
-        anyhow::Ok((h2, ms))
+        anyhow::Ok((parse, matched, extract))
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {

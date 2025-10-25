@@ -72,7 +72,7 @@ impl Parser {
         Ok(())
     }
 
-    pub fn done_on_http_hdr_end(&mut self) -> Result<()> {
+    fn done_on_http_hdr_end(&mut self) -> Result<()> {
         self.dfa
             .start_pattern(self.s_any)
             .push(CRLF)?
@@ -133,7 +133,9 @@ impl Parser {
         self.dfa.iter_transitions()
     }
 
-    pub fn attach<'obj>(&self, target: i32) -> Result<(Link, Link)> {
+    pub fn attach<'obj>(&mut self, target: i32) -> Result<(Link, Link, Link)> {
+        self.done_on_http_hdr_end()?;
+
         set_print(Some((PrintLevel::Debug, print)));
 
         let skel_builder = ParserSkelBuilder::default();
@@ -150,18 +152,24 @@ impl Parser {
 
         open_skel
             .progs
+            .matched
+            .set_attach_target(target, Some("matched".to_string()))?;
+
+        open_skel
+            .progs
             .extract_match
             .set_attach_target(target, Some("extract_match".to_string()))?;
 
         self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        let h1 = skel.progs.parse_h1.attach()?;
-        let ms = skel.progs.extract_match.attach()?;
+        let parse = skel.progs.parse_h1.attach()?;
+        let matched = skel.progs.matched.attach()?;
+        let extract = skel.progs.extract_match.attach()?;
 
         debug!("Beeline http/1 attached");
 
-        anyhow::Ok((h1, ms))
+        anyhow::Ok((parse, matched, extract))
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {

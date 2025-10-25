@@ -29,6 +29,7 @@ async fn match_h2_preface() {
 
     let mut parser = Parser::new();
     parser.match_preface().expect("match preface");
+    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
 
     let client = Client::builder()
         .http2_prior_knowledge()
@@ -58,6 +59,7 @@ async fn parse_simple_header() {
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
     let mut parser = Parser::new();
+    parser.match_preface().expect("match preface");
     parser
         .match_http_hdr("user-agent")
         .expect("match user-agent");
@@ -73,7 +75,7 @@ async fn parse_simple_header() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, user_agent);
+    assert_match_eq(&prog, 1, user_agent);
 
     drop(server);
     drop(prog);
@@ -90,6 +92,7 @@ async fn ignore_header_case() {
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
     let mut parser = Parser::new();
+    parser.match_preface().expect("match preface");
     parser
         .match_http_hdr("user-agent")
         .expect("match user-agent");
@@ -99,13 +102,13 @@ async fn ignore_header_case() {
     let user_agent = "beeline";
     let resp = client
         .get(format!("http://{}", ECHO_ADDR))
-        .header("UsEr-aGEnT", user_agent)
+        .header("UsEr-aGEnT", user_agent) // TODO: make sure reqwest does not normalize headers
         .send()
         .await
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, user_agent);
+    assert_match_eq(&prog, 1, user_agent);
 
     drop(server);
     drop(prog);
@@ -125,6 +128,7 @@ async fn ignore_header_case() {
 //     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
 //     let mut parser = Parser::new();
+//     parser.match_preface().expect("match preface");
 //     parser
 //         .match_http_hdr("user-agent")
 //         .expect("match user-agent");
@@ -140,7 +144,7 @@ async fn ignore_header_case() {
 //         .expect("request");
 
 //     assert_eq!(resp.status(), 200);
-//     assert_match_eq(&prog, 0, user_agent);
+//     assert_match_eq(&prog, 1, user_agent);
 
 //     drop(server);
 //     drop(prog);

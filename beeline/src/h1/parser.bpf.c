@@ -118,7 +118,17 @@ int parse_h1(struct sk_msg_md *msg) {
 }
 
 SEC("freplace")
+bool matched(const struct sk_msg_md *msg, u8 idx) {
+    if (idx >= MAX_MATCHES) return false;
+
+    struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
+    return (m.len > 0);
+}
+
+SEC("freplace")
 int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
+    if (idx >= MAX_MATCHES) return -1;
+
     struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
     if (m.len == 0) return -1;
 

@@ -47,6 +47,16 @@ struct {
     __type(value, char[128]);
 } matches SEC(".maps");
 
+__noinline bool matched(const struct sk_msg_md *msg, u8 idx) {
+    bool ret = false;
+
+	__sink(msg);
+	__sink(idx);
+	__sink(ret);
+
+	return ret;
+}
+
 __noinline int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
     int ret = -1;
 
@@ -116,11 +126,11 @@ int msg_verdict(struct sk_msg_md *msg) {
             return SK_PASS;
         }
 
-        // if (ms[0].idx == 0 && ms[0].len == 19) {
+        if (matched(msg, 0)) {
             int flag = 1;
             bpf_map_update_elem(&upgraded_conns, &ikey, &flag, BPF_ANY);
             num_upgraded_conns += 1;
-        // }
+        }
 
         store_matches = true;
     }
