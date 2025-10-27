@@ -1,4 +1,4 @@
-use beeline::h2::Parser;
+use beeline::{h1, h2};
 use httlib_huffman as huffman;
 use reqwest::{Client, header};
 use utils::{
@@ -33,9 +33,22 @@ async fn parse_indexed_header_field() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
-    let mut parser = Parser::new();
-    parser.capture_http_hdr("method").expect("match method");
-    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+    let h1 = h1::Parser::new()
+        .match_preface()
+        .expect("match preface")
+        .replace_parse("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
+
+    let h2 = h2::Parser::new()
+        .capture_http_hdr("method")
+        .expect("match method")
+        .replace_parse("parse_h2")
+        .replace_extract("extract_h2_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
 
     let client = build_client();
     let resp = client
@@ -49,7 +62,8 @@ async fn parse_indexed_header_field() {
 
     drop(server);
     drop(prog);
-    drop(parser);
+    drop(h2);
+    drop(h1);
 }
 
 #[tokio::test]
@@ -61,11 +75,22 @@ async fn parse_literal_header_field_no_indexing_indexed() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
 
-    let mut parser = Parser::new();
-    parser
+    let h1 = h1::Parser::new()
+        .match_preface()
+        .expect("match preface")
+        .replace_parse("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
+
+    let h2 = h2::Parser::new()
         .capture_http_hdr("authorization")
-        .expect("match authorization");
-    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+        .expect("match authorization")
+        .replace_parse("parse_h2")
+        .replace_extract("extract_h2_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
 
     let client = build_client();
     let resp = client
@@ -80,7 +105,8 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
     drop(server);
     drop(prog);
-    drop(parser);
+    drop(h2);
+    drop(h1);
 }
 
 #[tokio::test]
@@ -92,11 +118,22 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
 
-    let mut parser = Parser::new();
-    parser
+    let h1 = h1::Parser::new()
+        .match_preface()
+        .expect("match preface")
+        .replace_parse("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
+
+    let h2 = h2::Parser::new()
         .capture_http_hdr("user-agent")
-        .expect("match user-agent");
-    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+        .expect("match user-agent")
+        .replace_parse("parse_h2")
+        .replace_extract("extract_h2_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
 
     let client = build_client();
     let user_agent = "beeline";
@@ -112,7 +149,8 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
     drop(server);
     drop(prog);
-    drop(parser);
+    drop(h2);
+    drop(h1);
 }
 
 #[tokio::test]
@@ -124,14 +162,24 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
 
-    let mut parser = Parser::new();
-    parser
+    let h1 = h1::Parser::new()
+        .match_preface()
+        .expect("match preface")
+        .replace_parse("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
+
+    let h2 = h2::Parser::new()
         .capture_http_hdr("user-agent")
-        .expect("match user-agent");
-    parser
+        .expect("match user-agent")
         .capture_http_hdr("accept-language")
-        .expect("match accept-language");
-    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+        .expect("match accept-language")
+        .replace_parse("parse_h2")
+        .replace_extract("extract_h2_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
 
     let client = build_client();
     let user_agent = "beeline";
@@ -163,5 +211,6 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 
     drop(server);
     drop(prog);
-    drop(parser);
+    drop(h2);
+    drop(h1);
 }

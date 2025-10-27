@@ -15,6 +15,10 @@ pub struct Parser {
     s_any: u16,
 
     dfa: Dfa,
+
+    parse_fn: Option<String>,
+    extract_fn: Option<String>,
+    matched_fn: Option<String>,
 }
 
 include!(concat!(
@@ -55,10 +59,28 @@ impl Parser {
             s_init: 0,
             s_any: 1,
             dfa: Dfa::new(states.into_iter()),
+            parse_fn: None,
+            extract_fn: None,
+            matched_fn: None,
         }
     }
 
-    pub fn match_preface(&mut self) -> Result<()> {
+    pub fn replace_parse<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_fn = Some(parse_fn.to_string());
+        self
+    }
+
+    pub fn replace_matched<S: ToString>(mut self, matched_fn: S) -> Parser {
+        self.matched_fn = Some(matched_fn.to_string());
+        self
+    }
+
+    pub fn replace_extract<S: ToString>(mut self, extract_fn: S) -> Parser {
+        self.extract_fn = Some(extract_fn.to_string());
+        self
+    }
+
+    pub fn match_preface(mut self) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_init)
             .start_capturing()
@@ -69,19 +91,19 @@ impl Parser {
             .push(CRLF)?
             .done_on(CRLF)?;
 
-        Ok(())
+        Ok(self)
     }
 
-    fn done_on_http_hdr_end(&mut self) -> Result<()> {
+    fn done_on_http_hdr_end(mut self) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_any)
             .push(CRLF)?
             .done_on(CRLF)?;
 
-        Ok(())
+        Ok(self)
     }
 
-    pub fn match_http_req_status_line(&mut self) -> Result<()> {
+    pub fn match_http_req_status_line(mut self) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_init)
             .start_capturing()
@@ -92,10 +114,10 @@ impl Parser {
             .push(" HTTP/1.1")?
             .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
-        Ok(())
+        Ok(self)
     }
 
-    pub fn match_http_status_code(&mut self) -> Result<()> {
+    pub fn match_http_status_code(mut self) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_init)
             .push("HTTP/1.1 ")?
@@ -103,10 +125,10 @@ impl Parser {
             .push_optional('*')?
             .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
-        Ok(())
+        Ok(self)
     }
 
-    pub fn match_http_hdr(&mut self, key: &str) -> Result<()> {
+    pub fn match_http_hdr(mut self, key: &str) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_any)
             .push(CRLF)?
@@ -120,7 +142,7 @@ impl Parser {
             .push_optional('*')?
             .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
-        Ok(())
+        Ok(self)
     }
 
     pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
@@ -133,8 +155,8 @@ impl Parser {
         self.dfa.iter_transitions()
     }
 
-    pub fn attach<'obj>(&mut self, target: i32) -> Result<(Link, Link, Link)> {
-        self.done_on_http_hdr_end()?;
+    pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
+        let parser = self.done_on_http_hdr_end()?;
 
         set_print(Some((PrintLevel::Debug, print)));
 
@@ -142,30 +164,66 @@ impl Parser {
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(&mut open_obj)?;
         if log_enabled!(log::Level::Debug) {
-            open_skel.progs.parse_h1.set_log_level(1);
+            open_skel.progs.parse.set_log_level(1);
         }
 
         open_skel
             .progs
-            .parse_h1
-            .set_attach_target(target, Some("parse_h1".to_string()))?;
+            .parse
+            .set_autoload(parser.parse_fn.is_some());
+        open_skel
+            .progs
+            .parse
+            .set_autoattach(parser.parse_fn.is_some());
+        open_skel
+            .progs
+            .parse
+            .set_attach_target(target, parser.parse_fn.clone())?;
 
         open_skel
             .progs
+            .parse
+            .set_autoload(parser.matched_fn.is_some());
+        open_skel
+            .progs
+            .parse
+            .set_autoattach(parser.matched_fn.is_some());
+        open_skel
+            .progs
             .matched
-            .set_attach_target(target, Some("matched".to_string()))?;
+            .set_attach_target(target, parser.matched_fn.clone())?;
 
         open_skel
             .progs
             .extract_match
-            .set_attach_target(target, Some("extract_match".to_string()))?;
+            .set_autoload(parser.extract_fn.is_some());
+        open_skel
+            .progs
+            .extract_match
+            .set_autoattach(parser.extract_fn.is_some());
+        open_skel
+            .progs
+            .extract_match
+            .set_attach_target(target, parser.extract_fn.clone())?;
 
-        self.inject(&mut open_skel)?;
+        parser.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        let parse = skel.progs.parse_h1.attach()?;
-        let matched = skel.progs.matched.attach()?;
-        let extract = skel.progs.extract_match.attach()?;
+        let parse = if parser.parse_fn.is_some() {
+            Some(skel.progs.parse.attach()?)
+        } else {
+            None
+        };
+        let matched = if parser.matched_fn.is_some() {
+            Some(skel.progs.matched.attach()?)
+        } else {
+            None
+        };
+        let extract = if parser.extract_fn.is_some() {
+            Some(skel.progs.extract_match.attach()?)
+        } else {
+            None
+        };
 
         debug!("Beeline http/1 attached");
 

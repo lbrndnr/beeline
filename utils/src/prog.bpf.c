@@ -47,7 +47,7 @@ struct {
     __type(value, char[128]);
 } matches SEC(".maps");
 
-__noinline bool matched(const struct sk_msg_md *msg, u8 idx) {
+__noinline bool matched_h1(const struct sk_msg_md *msg, u8 idx) {
     bool ret = false;
 
 	__sink(msg);
@@ -57,7 +57,7 @@ __noinline bool matched(const struct sk_msg_md *msg, u8 idx) {
 	return ret;
 }
 
-__noinline int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
+__noinline int extract_h1_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
     int ret = -1;
 
 	__sink(msg);
@@ -75,6 +75,17 @@ __noinline int parse_h1(struct sk_msg_md *msg) {
 	__sink(ret);
 
 	bpf_msg_pull_data(msg, 0, msg->size, 0);
+
+	return ret;
+}
+
+__noinline int extract_h2_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
+    int ret = -1;
+
+	__sink(msg);
+	__sink(idx);
+	__sink(str);
+	__sink(ret);
 
 	return ret;
 }
@@ -126,7 +137,7 @@ int msg_verdict(struct sk_msg_md *msg) {
             return SK_PASS;
         }
 
-        if (matched(msg, 0)) {
+        if (matched_h1(msg, 0)) {
             int flag = 1;
             bpf_map_update_elem(&upgraded_conns, &ikey, &flag, BPF_ANY);
             num_upgraded_conns += 1;
@@ -140,7 +151,15 @@ int msg_verdict(struct sk_msg_md *msg) {
         u32 i = 0;
         bpf_for(i, 0, 32) {
             struct hdr_str str = { 0 };
-            if (extract_match(msg, i, &str) == 0) {
+            int res = -1;
+            if (is_h2) {
+                res = extract_h2_match(msg, i, &str);
+            }
+            else {
+                res = extract_h1_match(msg, i, &str);
+            }
+
+            if (res == 0) {
                 u16 len = str.len;
                 if (len > 128) len = 128;
 

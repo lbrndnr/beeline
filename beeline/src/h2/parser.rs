@@ -15,6 +15,10 @@ pub struct Parser {
     s_any: u16,
 
     dfa: Dfa,
+
+    parse_fn: Option<String>,
+    extract_fn: Option<String>,
+    matched_fn: Option<String>,
 }
 
 include!(concat!(
@@ -52,10 +56,28 @@ impl Parser {
             s_init: 0,
             s_any: 1,
             dfa: Dfa::new(states.into_iter()),
+            parse_fn: None,
+            extract_fn: None,
+            matched_fn: None,
         }
     }
 
-    pub fn capture_http_hdr(&mut self, key: &str) -> Result<()> {
+    pub fn replace_parse<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_fn = Some(parse_fn.to_string());
+        self
+    }
+
+    pub fn replace_matched<S: ToString>(mut self, matched_fn: S) -> Parser {
+        self.matched_fn = Some(matched_fn.to_string());
+        self
+    }
+
+    pub fn replace_extract<S: ToString>(mut self, extract_fn: S) -> Parser {
+        self.extract_fn = Some(extract_fn.to_string());
+        self
+    }
+
+    pub fn capture_http_hdr(mut self, key: &str) -> Result<Parser> {
         let mut key_encoded = Vec::new();
         huffman::encode(key.as_bytes(), &mut key_encoded)?;
 
@@ -64,7 +86,7 @@ impl Parser {
             .push(&key_encoded)?
             .capture_field_value();
 
-        Ok(())
+        Ok(self)
     }
 
     pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
@@ -119,37 +141,70 @@ impl Parser {
         Ok(())
     }
 
-    pub fn attach<'obj>(&self, target: i32) -> Result<(Link, Link, Link)> {
+    pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
         set_print(Some((PrintLevel::Debug, print)));
 
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(&mut open_obj)?;
         if log_enabled!(log::Level::Debug) {
-            open_skel.progs.parse_h2.set_log_level(1);
+            open_skel.progs.parse.set_log_level(1);
         }
 
+        open_skel.progs.parse.set_autoload(self.parse_fn.is_some());
         open_skel
             .progs
-            .parse_h2
-            .set_attach_target(target, Some("parse_h2".to_string()))?;
+            .parse
+            .set_autoattach(self.parse_fn.is_some());
+        open_skel
+            .progs
+            .parse
+            .set_attach_target(target, self.parse_fn.clone())?;
 
         open_skel
             .progs
             .matched
-            .set_attach_target(target, Some("matched".to_string()))?;
+            .set_autoload(self.matched_fn.is_some());
+        open_skel
+            .progs
+            .matched
+            .set_autoattach(self.matched_fn.is_some());
+        open_skel
+            .progs
+            .matched
+            .set_attach_target(target, self.matched_fn.clone())?;
 
         open_skel
             .progs
             .extract_match
-            .set_attach_target(target, Some("extract_match".to_string()))?;
+            .set_autoload(self.extract_fn.is_some());
+        open_skel
+            .progs
+            .extract_match
+            .set_autoattach(self.extract_fn.is_some());
+        open_skel
+            .progs
+            .extract_match
+            .set_attach_target(target, self.extract_fn.clone())?;
 
         self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        let parse = skel.progs.parse_h2.attach()?;
-        let matched = skel.progs.matched.attach()?;
-        let extract = skel.progs.extract_match.attach()?;
+        let parse = if self.parse_fn.is_some() {
+            Some(skel.progs.parse.attach()?)
+        } else {
+            None
+        };
+        let matched = if self.matched_fn.is_some() {
+            Some(skel.progs.matched.attach()?)
+        } else {
+            None
+        };
+        let extract = if self.extract_fn.is_some() {
+            Some(skel.progs.extract_match.attach()?)
+        } else {
+            None
+        };
 
         let id = skel.maps.static_table.info()?.info.id;
         let static_table = MapHandle::from_map_id(id)?;

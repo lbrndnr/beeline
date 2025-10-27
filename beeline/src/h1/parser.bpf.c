@@ -50,7 +50,7 @@ static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *act
     *action = t.action;
 }
 
-static __always_inline int _parse_h1_from(const struct sk_msg_md *msg, u16 start, struct hdr_match *ms, u32* cidx, u16* s) {
+static __always_inline int _parse_from(const struct sk_msg_md *msg, u16 start, struct hdr_match *ms, u32* cidx, u16* s) {
     char *data = (char *)(long)msg->data;
     char *data_end = (char *)(long)msg->data_end;
     u32 len = (u32)(data_end - data) & MAX_BYTES;
@@ -101,17 +101,17 @@ static __always_inline int _parse_h1_from(const struct sk_msg_md *msg, u16 start
 }
 
 SEC("freplace")
-int parse_h1(struct sk_msg_md *msg) {
+int parse(struct sk_msg_md *msg) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
-    int res = _parse_h1_from(msg, 0, parse_res.ms, cidx, &s);
+    int res = _parse_from(msg, 0, parse_res.ms, cidx, &s);
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
             return res;
         }
 
-        res = _parse_h1_from(msg, -res, parse_res.ms, cidx, &s);
+        res = _parse_from(msg, -res, parse_res.ms, cidx, &s);
     }
 
     return res;

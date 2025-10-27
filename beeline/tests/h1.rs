@@ -27,9 +27,14 @@ async fn match_h2_preface() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
-    let mut parser = Parser::new();
-    parser.match_preface().expect("match preface");
-    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+    let h1 = Parser::new()
+        .match_preface()
+        .expect("match preface")
+        .replace_parse("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
 
     let client = Client::builder()
         .http2_prior_knowledge()
@@ -46,7 +51,7 @@ async fn match_h2_preface() {
 
     drop(server);
     drop(prog);
-    drop(parser);
+    drop(h1);
 }
 
 #[tokio::test]
@@ -58,12 +63,16 @@ async fn parse_simple_header() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
-    let mut parser = Parser::new();
-    parser.match_preface().expect("match preface");
-    parser
+    let h1 = Parser::new()
+        .match_preface()
+        .expect("match preface")
         .match_http_hdr("user-agent")
-        .expect("match user-agent");
-    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+        .expect("match user-agent")
+        .replace_parse("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
 
     let client = build_client();
     let user_agent = "beeline";
@@ -79,7 +88,7 @@ async fn parse_simple_header() {
 
     drop(server);
     drop(prog);
-    drop(parser);
+    drop(h1);
 }
 
 #[tokio::test]
@@ -91,12 +100,16 @@ async fn ignore_header_case() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
 
-    let mut parser = Parser::new();
-    parser.match_preface().expect("match preface");
-    parser
+    let h1 = Parser::new()
+        .match_preface()
+        .expect("match preface")
         .match_http_hdr("user-agent")
-        .expect("match user-agent");
-    let parser = parser.attach(prog.prog_fd()).expect("attach parser");
+        .expect("match user-agent")
+        .replace_parse("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
 
     let client = build_client();
     let user_agent = "beeline";
@@ -112,7 +125,7 @@ async fn ignore_header_case() {
 
     drop(server);
     drop(prog);
-    drop(parser);
+    drop(h1);
 }
 
 // request with "user-agent   : beeline"

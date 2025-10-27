@@ -174,35 +174,6 @@ static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *act
     *action = t.action;
 }
 
-// static __always_inline u8 _next_hpack(enum h2_parse_state *ps, u32 *n, u32 k) {
-//     if (*ps == H2_IDX && *n == 7) {
-//         *ps = H2_IDX;
-//         *n = 7;
-//         return 0;
-//     }
-//     if (*ps == H2_IDX && (k == 64 || k == 0)) {
-//         *ps = H2_KEY_LEN;
-//         *n = 7;
-//         return 0;
-//     }
-//     if (*ps == H2_IDX && (*n == 6 || *n == 4)) {
-//         *ps = H2_VAL_LEN;
-//         *n = 7;
-//         return 0;
-//     }
-//     if (*ps == H2_KEY_LEN) {
-//         *ps = H2_KEY;
-//         return k-1;
-//     }
-//     if (*ps == H2_VAL_LEN) {
-//         *ps = H2_VAL;
-//         return k-1;
-//     }
-
-//     *ps = H2_IDX;
-//     return 0;
-// }
-
 __noinline __weak int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u32 *n __arg_nonnull, u32 *k __arg_nonnull, u8 *j __arg_nonnull) {
     if (*ps == H2_KEY_LEN) {
         *ps = H2_KEY;
@@ -336,7 +307,7 @@ __noinline __weak int _add_table_entry(const struct sk_msg_md *msg, u32 idx, con
     return 1;
 }
 
-static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start, u16* s, struct parse_res *pres) {
+static __always_inline int _parse_from(const struct sk_msg_md *msg, u16 start, u16* s, struct parse_res *pres) {
     char *data = (char *)(long)msg->data;
     char *data_end = (char *)(long)msg->data_end;
     u32 len = (u32)(data_end - data) & MAX_BYTES;
@@ -416,7 +387,7 @@ static __always_inline int _parse_h2_from(const struct sk_msg_md *msg, u16 start
 }
 
 SEC("freplace")
-int parse_h2(struct sk_msg_md *msg) {
+int parse(struct sk_msg_md *msg) {
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
 
@@ -432,14 +403,14 @@ int parse_h2(struct sk_msg_md *msg) {
     }
 
     u16 s = s_any;
-    int res = _parse_h2_from(msg, 9, &s, &parse_res);
+    int res = _parse_from(msg, 9, &s, &parse_res);
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
             return res;
         }
 
-        res = _parse_h2_from(msg, -res, &s, &parse_res);
+        res = _parse_from(msg, -res, &s, &parse_res);
     }
 
     return res + 9;
