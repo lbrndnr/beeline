@@ -37,16 +37,6 @@ fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     trans { state, action }
 }
 
-fn print(level: PrintLevel, msg: String) {
-    let msg = msg.trim_start_matches("libbpf:").trim();
-
-    match level {
-        PrintLevel::Debug => debug!(target: "libbpf", "{}", msg),
-        PrintLevel::Info => info!(target: "libbpf", "{}", msg),
-        PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
-    }
-}
-
 #[allow(dead_code)]
 impl Parser {
     /// Creates a new HTTP/2 parser.
@@ -198,7 +188,7 @@ impl Parser {
     ///
     /// Returns an error if attachment to the target program fails.
     pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
-        set_print(Some((PrintLevel::Debug, print)));
+        set_print(Some((PrintLevel::Debug, crate::print)));
 
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();

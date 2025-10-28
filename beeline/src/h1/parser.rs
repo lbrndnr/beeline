@@ -4,7 +4,7 @@ use libbpf_rs::{
     Link, MapCore, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
-use log::{debug, info, log_enabled, warn};
+use log::{debug, log_enabled, warn};
 use std::mem::MaybeUninit;
 use types::*;
 
@@ -38,16 +38,6 @@ fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     };
 
     trans { state, action }
-}
-
-fn print(level: PrintLevel, msg: String) {
-    let msg = msg.trim_start_matches("libbpf:").trim();
-
-    match level {
-        PrintLevel::Debug => debug!(target: "libbpf", "{}", msg),
-        PrintLevel::Info => info!(target: "libbpf", "{}", msg),
-        PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
-    }
 }
 
 #[allow(dead_code)]
@@ -235,9 +225,9 @@ impl Parser {
     ///
     /// Returns an error if attachment to the target program fails.
     pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
-        let parser = self.done_on_http_hdr_end()?;
+        set_print(Some((PrintLevel::Debug, crate::print)));
 
-        set_print(Some((PrintLevel::Debug, print)));
+        let parser = self.done_on_http_hdr_end()?;
 
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();

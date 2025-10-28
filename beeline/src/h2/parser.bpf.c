@@ -42,7 +42,7 @@ struct {
 } dynamic_table SEC(".maps");
 
 struct dynamic_table_info {
-    u16 current_size;
+    u16 size;
     u16 max_size;
 };
 
@@ -328,7 +328,7 @@ static __always_inline int _parse_from(const struct sk_msg_md *msg, u16 start, u
     struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &conn);
     if (!dt_info) {
         struct dynamic_table_info new_info = {
-            .current_size = 0,
+            .size = 0,
             .max_size = 100,
         };
         bpf_map_update_elem(&dynamic_table_info, &conn, &new_info, BPF_ANY);
@@ -374,8 +374,8 @@ static __always_inline int _parse_from(const struct sk_msg_md *msg, u16 start, u
                 .in_msg = true,
             };
 
-            int inc = _add_table_entry(msg, dt_info->current_size + STATIC_TABLE_SIZE + 1, &key, &val);
-            dt_info->current_size += inc;
+            int inc = _add_table_entry(msg, dt_info->size + STATIC_TABLE_SIZE + 1, &key, &val);
+            dt_info->size += inc;
 
             bpf_log("capture: %d {%d, %d}", cid, i, k);
             pres->ms[cid & MAX_MATCH_MASK] = val;
