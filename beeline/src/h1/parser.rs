@@ -52,9 +52,8 @@ fn print(level: PrintLevel, msg: String) {
 
 #[allow(dead_code)]
 impl Parser {
-    /// Creates a new HTTP/1.1 parser with default states.
+    /// Creates a new HTTP/1.1 parser.
     ///
-    /// The parser is initialized with two states: an initial state (0) and an "any" state (1).
     /// Additional configuration must be done through the builder methods before calling `attach`.
     pub fn new() -> Parser {
         let states = vec![0, 1];
@@ -176,9 +175,6 @@ impl Parser {
 
     /// Configures the parser to match and capture a specific HTTP header value.
     ///
-    /// This method adds pattern matching for an HTTP header with the given key.
-    /// It handles optional whitespace around the colon and captures the header value.
-    ///
     /// # Arguments
     ///
     /// * `key` - The HTTP header name to match (case-insensitive)
@@ -223,11 +219,7 @@ impl Parser {
         self.dfa.iter_transitions()
     }
 
-    /// Attaches the configured HTTP/1.1 parser to the target program using eBPF.
-    ///
-    /// This method compiles the parser's DFA into eBPF bytecode, injects it into the
-    /// target program, and attaches it to the specified functions. The parser will start
-    /// processing HTTP/1.1 traffic according to the configured patterns.
+    /// Attaches the configured parser to the target program.
     ///
     /// # Arguments
     ///
@@ -241,10 +233,7 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The eBPF program cannot be loaded
-    /// - Attachment to the target program fails
-    /// - Required system resources are unavailable
+    /// Returns an error if attachment to the target program fails.
     pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
         let parser = self.done_on_http_hdr_end()?;
 
