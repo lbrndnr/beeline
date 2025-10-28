@@ -49,6 +49,10 @@ fn print(level: PrintLevel, msg: String) {
 
 #[allow(dead_code)]
 impl Parser {
+    /// Creates a new HTTP/2 parser with default states.
+    ///
+    /// The parser is initialized with two states: an initial state (0) and an "any" state (1).
+    /// Additional configuration must be done through the builder methods before calling `attach`.
     pub fn new() -> Parser {
         let states = vec![0, 1];
 
@@ -62,21 +66,53 @@ impl Parser {
         }
     }
 
+    /// Specifies the function template in the target program to be replaced with an HTTP/2
+    /// parser. The function will not be replaced until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `parse_fn` - The name of the function to replace in the target program
     pub fn replace_parse<S: ToString>(mut self, parse_fn: S) -> Parser {
         self.parse_fn = Some(parse_fn.to_string());
         self
     }
 
+    /// Specifies the function template in the target program to be called when a pattern match
+    /// is completed. The function will not be replaced until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `matched_fn` - The name of the matched callback function in the target program
     pub fn replace_matched<S: ToString>(mut self, matched_fn: S) -> Parser {
         self.matched_fn = Some(matched_fn.to_string());
         self
     }
 
+    /// Specifies the function template in the target program to be called when extracting
+    /// matched content. The function will not be replaced until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `extract_fn` - The name of the extract callback function in the target program
     pub fn replace_extract<S: ToString>(mut self, extract_fn: S) -> Parser {
         self.extract_fn = Some(extract_fn.to_string());
         self
     }
 
+    /// Configures the parser to capture an HTTP/2 header field value.
+    ///
+    /// This method adds pattern matching for an HTTP/2 header with the given key using
+    /// HPACK encoding. The header key is Huffman-encoded before being added to the DFA.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The HTTP/2 header name to capture (will be Huffman-encoded)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Huffman encoding of the key fails
+    /// - Pattern configuration fails
     pub fn capture_http_hdr(mut self, key: &str) -> Result<Parser> {
         let mut key_encoded = Vec::new();
         huffman::encode(key.as_bytes(), &mut key_encoded)?;
@@ -89,10 +125,21 @@ impl Parser {
         Ok(self)
     }
 
+    /// Returns an iterator over all states in the parser's DFA.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to state identifiers.
     pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
         self.dfa.iter_states()
     }
 
+    /// Returns an iterator over all transitions in the parser's DFA.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding tuples of (from_state, to_state, input_byte, action).
+    /// Note: Unlike HTTP/1.1, HTTP/2 uses bytes instead of chars for transitions.
     pub fn iter_transitions<'a>(
         &'a self,
     ) -> impl Iterator<Item = (&'a u16, &'a u16, &'a u8, &'a Action)> {
@@ -141,6 +188,30 @@ impl Parser {
         Ok(())
     }
 
+    /// Attaches the configured HTTP/2 parser to the target program using eBPF.
+    ///
+    /// This method compiles the parser's DFA into eBPF bytecode, injects it into the
+    /// target program, populates the HPACK static table, and attaches it to the specified
+    /// functions. The parser will start processing HTTP/2 traffic according to the
+    /// configured patterns.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The file descriptor of the target program to attach to
+    ///
+    /// # Returns
+    ///
+    /// A tuple of optional Links for (parse, matched, extract) functions. Each Link is
+    /// `Some` if the corresponding function was configured via `replace_*` methods,
+    /// or `None` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The eBPF program cannot be loaded
+    /// - Attachment to the target program fails
+    /// - Static table population fails
+    /// - Required system resources are unavailable
     pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
         set_print(Some((PrintLevel::Debug, print)));
 
