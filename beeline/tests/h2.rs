@@ -209,6 +209,21 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     assert_match_eq(&prog, 0, user_agent);
     assert_match_eq(&prog, 1, lang);
 
+    // now we add another header to check if we can still retrieve the headers
+    // in the dynamic table
+    let resp = client
+        .get(format!("http://{}", ECHO_ADDR))
+        .header(header::ACCEPT_LANGUAGE, lang)
+        .header(header::USER_AGENT, user_agent)
+        .header(header::ORIGIN, "the hive")
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    assert_match_eq(&prog, 0, user_agent);
+    assert_match_eq(&prog, 1, lang);
+
     drop(server);
     drop(prog);
     drop(h2);

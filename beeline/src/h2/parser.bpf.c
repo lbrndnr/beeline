@@ -402,6 +402,8 @@ int parse(struct sk_msg_md *msg) {
         return len + 9;
     }
 
+    parse_res = (struct parse_res) { 0 };
+
     u16 s = s_any;
     int res = _parse_from(msg, 9, &s, &parse_res);
 
