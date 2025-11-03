@@ -8,13 +8,28 @@ use utils::{
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
 
-fn assert_match_eq(prog: &TestProgram, idx: usize, expected: &str) {
-    let actual_hf = prog.get_match(idx).unwrap().unwrap();
+fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
+    let actual_hf = prog.get_match(idx).expect("get_match");
+
     let mut actual = Vec::new();
-    huffman::decode(&actual_hf, &mut actual, huffman::DecoderSpeed::OneBit).unwrap();
+    if let Some(actual_hf) = &actual_hf {
+        huffman::decode(actual_hf, &mut actual, huffman::DecoderSpeed::OneBit).unwrap();
+    }
     let actual = String::from_utf8(actual).unwrap();
 
-    assert_eq!(actual.as_str(), expected);
+    if expected.is_none() {
+        assert!(
+            actual_hf.is_none(),
+            "get_match({idx}): {actual}, expected: none"
+        );
+    } else {
+        let expected = expected.unwrap();
+        assert!(
+            actual_hf.is_some(),
+            "get_match({idx}): none, expected: {expected}"
+        );
+        assert_eq!(actual.as_str(), expected);
+    }
 }
 
 fn build_client() -> Client {
@@ -58,7 +73,7 @@ async fn parse_indexed_header_field() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, "GET");
+    assert_match_eq(&prog, 0, Some("GET"));
 
     drop(server);
     drop(prog);
@@ -101,7 +116,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, "Basic YmVlbGluZTpiZWVsaW5l"); // beeline:beeline in base64
+    assert_match_eq(&prog, 0, Some("Basic YmVlbGluZTpiZWVsaW5l")); // beeline:beeline in base64
 
     drop(server);
     drop(prog);
@@ -145,7 +160,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, user_agent);
+    assert_match_eq(&prog, 0, Some(user_agent));
 
     drop(server);
     drop(prog);
@@ -193,8 +208,21 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, user_agent);
-    assert_match_eq(&prog, 1, lang);
+    assert_match_eq(&prog, 0, Some(user_agent));
+    assert_match_eq(&prog, 1, Some(lang));
+
+    // repeat the request with other headers
+    // this will check if it indexes the dynamic table correctly
+    let resp = client
+        .get(format!("http://{}", ECHO_ADDR))
+        .header(header::VIA, "the hive")
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    assert_match_eq(&prog, 0, None);
+    assert_match_eq(&prog, 1, None);
 
     // we repeat this request to check if the header has been added to the dynamic table
     let resp = client
@@ -206,23 +234,8 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, user_agent);
-    assert_match_eq(&prog, 1, lang);
-
-    // now we add another header to check if we can still retrieve the headers
-    // in the dynamic table
-    let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
-        .header(header::ACCEPT_LANGUAGE, lang)
-        .header(header::USER_AGENT, user_agent)
-        .header(header::ORIGIN, "the hive")
-        .send()
-        .await
-        .expect("request");
-
-    assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 0, user_agent);
-    assert_match_eq(&prog, 1, lang);
+    assert_match_eq(&prog, 0, Some(user_agent));
+    assert_match_eq(&prog, 1, Some(lang));
 
     drop(server);
     drop(prog);

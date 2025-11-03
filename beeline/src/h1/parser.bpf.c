@@ -102,6 +102,8 @@ static __always_inline int _parse_from(const struct sk_msg_md *msg, u16 start, s
 
 SEC("freplace")
 int parse(struct sk_msg_md *msg) {
+    parse_res = (struct parse_res) { 0 };
+
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
     int res = _parse_from(msg, 0, parse_res.ms, cidx, &s);

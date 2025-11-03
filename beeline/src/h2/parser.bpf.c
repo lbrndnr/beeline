@@ -119,6 +119,10 @@ static __always_inline u8* _extract_match(const struct sk_msg_md *msg, const str
     if (m->idx > STATIC_TABLE_SIZE) {
         struct dynamic_table_key key = { 0 };
         new_table_key(msg, m->idx, &key);
+
+        // struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &key.conn);
+        // if (dt_info == NULL) return NULL;
+        // key.idx = dt_info->size - m->idx;
         hf = bpf_map_lookup_elem(&dynamic_table, &key);
     }
     else {
@@ -243,11 +247,14 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     }
 }
 
-__noinline __weak s8 _parse_table_entry(const struct sk_msg_md *msg, u16 *s __arg_nonnull, u32 idx, struct parse_res *pres __arg_nonnull) {
+__noinline __weak s8 _parse_table_entry(const struct sk_msg_md *msg, u16 *s __arg_nonnull, u32 idx, u16 dt_size, struct parse_res *pres __arg_nonnull) {
     struct header_field *hf = NULL;
     if (idx > STATIC_TABLE_SIZE) {
+        idx = STATIC_TABLE_SIZE + dt_size - (idx - STATIC_TABLE_SIZE);
+
         struct dynamic_table_key key = { 0 };
         new_table_key(msg, idx, &key);
+        bpf_log("lookup dt: %d", idx);
         hf = bpf_map_lookup_elem(&dynamic_table, &key);
     }
     else {
@@ -356,10 +363,10 @@ static __always_inline int _parse_from(const struct sk_msg_md *msg, u16 start, u
         if (j != 0) continue;
 
         if (ps == H2_IDX) {
-            bpf_log("parsed idx: %d", k);
+            bpf_log("parsed idx: %d, dt_size: %d", k, dt_info->size);
 
             *s = s_any;
-            cid = _parse_table_entry(msg, s, k, pres);
+            cid = _parse_table_entry(msg, s, k, dt_info->size, pres);
             key.idx = k;
             key.in_msg = false;
         }
@@ -367,19 +374,22 @@ static __always_inline int _parse_from(const struct sk_msg_md *msg, u16 start, u
             key.len = k;
             key.in_msg = true;
         }
-        else if (ps == H2_VAL_LEN && cid >= 0) {
-            struct hdr_match val = (struct hdr_match) {
-                .idx = i + 1,
-                .len = k,
-                .in_msg = true,
-            };
+        else if (ps == H2_VAL_LEN) {
+            if (cid >= 0) {
+                struct hdr_match val = (struct hdr_match) {
+                    .idx = i + 1,
+                    .len = k,
+                    .in_msg = true,
+                };
 
-            int inc = _add_table_entry(msg, dt_info->size + STATIC_TABLE_SIZE + 1, &key, &val);
-            dt_info->size += inc;
+                _add_table_entry(msg, dt_info->size + STATIC_TABLE_SIZE, &key, &val);
 
-            bpf_log("capture: %d {%d, %d}", cid, i, k);
-            pres->ms[cid & MAX_MATCH_MASK] = val;
-            cid = -1;
+                bpf_log("capture: %d {%d, %d}", cid, i, k);
+                pres->ms[cid & MAX_MATCH_MASK] = val;
+                cid = -1;
+            }
+
+            dt_info->size +=1;
         }
     }
 

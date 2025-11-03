@@ -6,7 +6,7 @@ use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
-use log::{debug, info, log_enabled, warn};
+use log::{debug, log_enabled, warn};
 use std::mem::MaybeUninit;
 use types::*;
 
