@@ -35,6 +35,7 @@ fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
 fn build_client() -> Client {
     Client::builder()
         .http2_prior_knowledge()
+        .http2_max_header_list_size(1024)
         .build()
         .expect("client")
 }
@@ -242,3 +243,52 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     drop(h2);
     drop(h1);
 }
+
+// #[tokio::test]
+// async fn evict_header_field_from_dynamic_table() {
+//     _ = env_logger::try_init();
+
+//     let server = server::launch(ECHO_ADDR).await;
+
+//     let mut open_obj = OpenObject::new();
+//     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+
+//     let h1 = h1::Parser::new()
+//         .match_preface()
+//         .expect("match preface")
+//         .replace_parse("parse_h1")
+//         .replace_matched("matched_h1")
+//         .replace_extract("extract_h1_match")
+//         .attach(prog.prog_fd())
+//         .expect("attach parser");
+
+//     let h2 = h2::Parser::new()
+//         .capture_http_hdr("user-agent")
+//         .expect("match user-agent")
+//         .capture_http_hdr("accept-language")
+//         .expect("match accept-language")
+//         .replace_parse("parse_h2")
+//         .replace_extract("extract_h2_match")
+//         .attach(prog.prog_fd())
+//         .expect("attach parser");
+
+//     let client = build_client();
+//     let user_agent = "beeline";
+//     let lang = "sumsum";
+//     let resp = client
+//         .get(format!("http://{}", ECHO_ADDR))
+//         .header(header::USER_AGENT, user_agent)
+//         .header(header::ACCEPT_LANGUAGE, lang)
+//         .send()
+//         .await
+//         .expect("request");
+
+//     assert_eq!(resp.status(), 200);
+//     assert_match_eq(&prog, 0, Some(user_agent));
+//     assert_match_eq(&prog, 1, Some(lang));
+
+//     drop(server);
+//     drop(prog);
+//     drop(h2);
+//     drop(h1);
+// }
