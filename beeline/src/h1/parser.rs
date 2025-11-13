@@ -1,5 +1,5 @@
 use crate::h1::{Action, dfa::Dfa};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use libbpf_rs::{
     Link, MapCore, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
@@ -10,13 +10,28 @@ use types::*;
 
 const CRLF: &str = "\r\n";
 
+#[derive(Debug, Clone)]
+enum ParseFn {
+    Buf(String),
+    Msg(String),
+}
+
+impl ToString for ParseFn {
+    fn to_string(&self) -> String {
+        match self {
+            ParseFn::Buf(name) => name.clone(),
+            ParseFn::Msg(name) => name.clone(),
+        }
+    }
+}
+
 pub struct Parser {
     s_init: u16,
     s_any: u16,
 
     dfa: Dfa,
 
-    parse_fn: Option<String>,
+    parse_fn: Option<ParseFn>,
     extract_fn: Option<String>,
     matched_fn: Option<String>,
 }
@@ -64,8 +79,13 @@ impl Parser {
     /// # Arguments
     ///
     /// * `parse_fn` - The name of the function to replace in the target program
-    pub fn replace_parse<S: ToString>(mut self, parse_fn: S) -> Parser {
-        self.parse_fn = Some(parse_fn.to_string());
+    pub fn replace_parse_msg<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_fn = Some(ParseFn::Msg(parse_fn.to_string()));
+        self
+    }
+
+    pub fn replace_parse_buf<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_fn = Some(ParseFn::Buf(parse_fn.to_string()));
         self
     }
 
@@ -233,30 +253,34 @@ impl Parser {
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(&mut open_obj)?;
         if log_enabled!(log::Level::Debug) {
-            open_skel.progs.parse.set_log_level(1);
+            open_skel.progs.parse_msg.set_log_level(1);
+            open_skel.progs.parse_buf.set_log_level(1);
+        }
+
+        match &parser.parse_fn {
+            &Some(ParseFn::Msg(ref name)) => {
+                open_skel.progs.parse_msg.set_autoload(true);
+                open_skel.progs.parse_buf.set_autoload(false);
+                open_skel
+                    .progs
+                    .parse_msg
+                    .set_attach_target(target, Some(name.clone()))?;
+            }
+            &Some(ParseFn::Buf(ref name)) => {
+                open_skel.progs.parse_msg.set_autoload(false);
+                open_skel.progs.parse_buf.set_autoload(true);
+                open_skel
+                    .progs
+                    .parse_buf
+                    .set_attach_target(target, Some(name.clone()))?;
+            }
+            None => bail!("No parse function specified"),
         }
 
         open_skel
             .progs
-            .parse
-            .set_autoload(parser.parse_fn.is_some());
-        open_skel
-            .progs
-            .parse
-            .set_autoattach(parser.parse_fn.is_some());
-        open_skel
-            .progs
-            .parse
-            .set_attach_target(target, parser.parse_fn.clone())?;
-
-        open_skel
-            .progs
-            .parse
+            .matched
             .set_autoload(parser.matched_fn.is_some());
-        open_skel
-            .progs
-            .parse
-            .set_autoattach(parser.matched_fn.is_some());
         open_skel
             .progs
             .matched
@@ -269,19 +293,16 @@ impl Parser {
         open_skel
             .progs
             .extract_match
-            .set_autoattach(parser.extract_fn.is_some());
-        open_skel
-            .progs
-            .extract_match
             .set_attach_target(target, parser.extract_fn.clone())?;
 
         parser.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        let parse = if parser.parse_fn.is_some() {
-            Some(skel.progs.parse.attach()?)
-        } else {
-            None
+
+        let parse = match &parser.parse_fn {
+            &Some(ParseFn::Msg(_)) => Some(skel.progs.parse_msg.attach()?),
+            &Some(ParseFn::Buf(_)) => Some(skel.progs.parse_buf.attach()?),
+            None => bail!("No parse function specified"),
         };
         let matched = if parser.matched_fn.is_some() {
             Some(skel.progs.matched.attach()?)

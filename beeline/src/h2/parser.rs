@@ -201,10 +201,6 @@ impl Parser {
         open_skel
             .progs
             .parse
-            .set_autoattach(self.parse_fn.is_some());
-        open_skel
-            .progs
-            .parse
             .set_attach_target(target, self.parse_fn.clone())?;
 
         open_skel
@@ -214,20 +210,12 @@ impl Parser {
         open_skel
             .progs
             .matched
-            .set_autoattach(self.matched_fn.is_some());
-        open_skel
-            .progs
-            .matched
             .set_attach_target(target, self.matched_fn.clone())?;
 
         open_skel
             .progs
             .extract_match
             .set_autoload(self.extract_fn.is_some());
-        open_skel
-            .progs
-            .extract_match
-            .set_autoattach(self.extract_fn.is_some());
         open_skel
             .progs
             .extract_match
