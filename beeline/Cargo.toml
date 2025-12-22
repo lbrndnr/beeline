@@ -17,6 +17,6 @@ log = "0.4.27"
 libbpf-cargo = "0.25.0"
 
 [dev-dependencies]
-reqwest = "0.12.20"
+reqwest = "0.12.26"
 tokio = { version = "1.45.1", features = ["full"] }
 utils = { path = "../utils" }
