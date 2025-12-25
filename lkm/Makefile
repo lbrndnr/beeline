@@ -6,9 +6,8 @@ TARGET_DIR=$(PWD)/../target/release/build
 TARGET=$(TARGET_DIR)/beeline.ko
 
 all:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 	mkdir -p $(TARGET_DIR)
-	cp beeline.ko $(TARGET_DIR)
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) MO=$(TARGET_DIR) modules
 
 clean:
 	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
