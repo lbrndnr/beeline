@@ -1,4 +1,4 @@
-obj-m += beeline.o
+obj-m := beeline.o
 
 # Enable BTF generation
 KBUILD_CFLAGS += -g -O2

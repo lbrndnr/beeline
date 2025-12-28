@@ -4,11 +4,13 @@
 #include <linux/btf.h>
 
 #include "base64url.h"
+#include "hpack.h"
 
 BTF_KFUNCS_START(beeline_kfunc_btf_ids)
 
 BTF_ID_FLAGS(func, bl_base64url_encode, KF_RCU)
 BTF_ID_FLAGS(func, bl_base64url_decode, KF_RCU)
+BTF_ID_FLAGS(func, bl_hpack_decode, KF_RCU)
 
 BTF_KFUNCS_END(beeline_kfunc_btf_ids)
 
