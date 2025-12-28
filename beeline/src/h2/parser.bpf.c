@@ -399,9 +399,6 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
 }
 
 static __always_inline int _parse_msg_from(const struct sk_msg_md *msg, u16 start, u16* s, struct parse_res *pres) {
-    u8 *data = (u8 *)(long)msg->data;
-    u8 *data_end = (u8 *)(long)msg->data_end;
-
     struct msg_ctx ctx = _new_msg_ctx(msg);
     return _parse_from(&ctx, start, s, pres);
 }
