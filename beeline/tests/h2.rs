@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use beeline::{h1, h2};
 use httlib_huffman as huffman;
 use reqwest::{Client, header};
@@ -36,6 +38,7 @@ fn build_client() -> Client {
     Client::builder()
         .http2_prior_knowledge()
         .http2_max_header_list_size(1024)
+        .timeout(Duration::from_secs(1))
         .build()
         .expect("client")
 }
