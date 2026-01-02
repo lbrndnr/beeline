@@ -45,7 +45,9 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn parse_indexed_header_field() {
-    _ = env_logger::try_init();
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -87,7 +89,9 @@ async fn parse_indexed_header_field() {
 
 #[tokio::test]
 async fn parse_literal_header_field_no_indexing_indexed() {
-    _ = env_logger::try_init();
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -130,7 +134,9 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_indexed() {
-    _ = env_logger::try_init();
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -178,7 +184,9 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
-    _ = env_logger::try_init();
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -253,7 +261,9 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 
 // #[tokio::test]
 // async fn evict_header_field_from_dynamic_table() {
-//     _ = env_logger::try_init();
+//     tracing_subscriber::fmt()
+// .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+// .try_init().expect("init tracing");
 
 //     let server = server::launch(ECHO_ADDR).await;
 

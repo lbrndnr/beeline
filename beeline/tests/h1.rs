@@ -20,7 +20,9 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn match_h2_preface() {
-    _ = env_logger::try_init();
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -56,7 +58,9 @@ async fn match_h2_preface() {
 
 #[tokio::test]
 async fn parse_simple_header() {
-    _ = env_logger::try_init();
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -93,7 +97,9 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignore_header_case() {
-//     _ = env_logger::try_init();
+// _ = tracing_subscriber::fmt()
+//     .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+//     .try_init();
 
 //     let server = server::launch(ECHO_ADDR).await;
 
@@ -130,7 +136,9 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignores_header_whitespace() {
-//     _ = env_logger::try_init();
+// _ = tracing_subscriber::fmt()
+//     .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+//     .try_init();
 
 //     let server = server::launch(ECHO_ADDR).await;
 
@@ -167,7 +175,9 @@ async fn parse_simple_header() {
 
 #[tokio::test]
 async fn parse_subsequent_headers() {
-    _ = env_logger::try_init();
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     let server = server::launch(ECHO_ADDR).await;
 

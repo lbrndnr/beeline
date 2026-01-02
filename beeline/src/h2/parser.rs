@@ -6,8 +6,8 @@ use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
-use log::{debug, log_enabled, warn};
 use std::mem::MaybeUninit;
+use tracing::{Level, debug, warn};
 use types::*;
 
 pub struct Parser {
@@ -193,7 +193,7 @@ impl Parser {
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(&mut open_obj)?;
-        if log_enabled!(log::Level::Debug) {
+        if tracing::event_enabled!(Level::TRACE) {
             open_skel.progs.parse.set_log_level(1);
         }
 

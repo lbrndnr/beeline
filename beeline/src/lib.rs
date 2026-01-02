@@ -1,5 +1,5 @@
 use libbpf_rs::PrintLevel;
-use log::{debug, info, warn};
+use tracing::{debug, info, warn};
 
 pub mod h1;
 pub mod h2;

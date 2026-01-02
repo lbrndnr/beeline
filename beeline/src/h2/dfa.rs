@@ -1,7 +1,7 @@
 use crate::h2::Action;
 use anyhow::Result;
-use log::trace;
 use std::collections::{HashMap, HashSet};
+use tracing::trace;
 
 pub struct DfaBuilder<'a> {
     dfa: &'a mut Dfa,

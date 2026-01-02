@@ -7,7 +7,6 @@ use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
-use log::{debug, info, log_enabled, warn};
 use std::{
     io::{Error, ErrorKind},
     mem::MaybeUninit,
@@ -18,6 +17,7 @@ use std::{
         unix::fs::OpenOptionsExt,
     },
 };
+use tracing::{Level, debug, info, warn};
 use types::*;
 
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/prog.skel.rs"));
@@ -56,7 +56,7 @@ impl<'obj> TestProgram<'obj> {
 
         let skel_builder = ProgSkelBuilder::default();
         let mut open_skel = skel_builder.open(open_obj)?;
-        if log_enabled!(log::Level::Debug) {
+        if tracing::event_enabled!(Level::TRACE) {
             open_skel.progs.msg_verdict.set_log_level(1);
         }
 
