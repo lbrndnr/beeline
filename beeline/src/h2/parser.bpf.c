@@ -79,6 +79,7 @@ const u16 s_any = 1;
 
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
 
+// TODO: put this into a per_cpu map
 struct parse_res {
     struct hdr_match ms[MAX_MATCHES];
 };

@@ -16,13 +16,13 @@ async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, Stat
 }
 
 pub async fn launch<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<()> {
-    let app = Router::new().route(
-        "/",
-        get(move |_: HeaderMap, body: Bytes| {
-            let res_hdrs = HeaderMap::new();
-            echo(res_hdrs, body)
-        }),
-    );
+    let echo = get(move |_: HeaderMap, body: Bytes| {
+        let res_hdrs = HeaderMap::new();
+        echo(res_hdrs, body)
+    });
+    let app = Router::new()
+        .route("/", echo.clone())
+        .route("/{*path}", echo.clone());
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     tokio::spawn(async move {

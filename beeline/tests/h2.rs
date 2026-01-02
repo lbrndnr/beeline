@@ -146,6 +146,8 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
     let h2 = h2::Parser::new()
         .capture_http_hdr("user-agent")
         .expect("match user-agent")
+        .capture_http_hdr("path")
+        .expect("match path")
         .replace_parse("parse_h2")
         .replace_extract("extract_h2_match")
         .attach(prog.prog_fd())
@@ -153,8 +155,9 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
     let client = build_client();
     let user_agent = "beeline";
+    let path = "/bee/1234";
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}{}", ECHO_ADDR, path))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await
@@ -162,6 +165,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
     assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some(user_agent));
+    assert_match_eq(&prog, 1, Some(path));
 
     drop(server);
     drop(prog);
