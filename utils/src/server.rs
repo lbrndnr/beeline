@@ -6,9 +6,14 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use tracing::debug;
 
 async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
     if let Ok(body) = String::from_utf8(body.to_vec()) {
+        debug!(
+            "Received request with headers: {:?} and body: {}",
+            headers, body
+        );
         Ok((headers, body))
     } else {
         Err(StatusCode::BAD_REQUEST)
@@ -16,10 +21,7 @@ async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, Stat
 }
 
 pub async fn launch<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<()> {
-    let echo = get(move |_: HeaderMap, body: Bytes| {
-        let res_hdrs = HeaderMap::new();
-        echo(res_hdrs, body)
-    });
+    let echo = get(move |hdrs: HeaderMap, body: Bytes| echo(hdrs, body));
     let app = Router::new()
         .route("/", echo.clone())
         .route("/{*path}", echo.clone());
