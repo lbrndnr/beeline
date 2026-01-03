@@ -420,17 +420,18 @@ int parse(struct sk_msg_md *msg) {
 
     u32 len = data[0] << 16 | data[1] << 8 | data[2];
     u8 type = data[3];
+    u8 flags = data[4];
+    bool padded = flags & 0x08;
+    u8 hdr_len = (padded) ? 10 : 9;
 
-    bpf_log("Parsing HTTP/2 message with length %d, type %d", len, type);
+    bpf_log("Parsing HTTP/2 message with length %d, type %d, padded %d", len, *type, padded);
 
     if (type != 0x01) {
-        return len + 9;
+        return len + hdr_len;
     }
 
-    parse_res = (struct parse_res) { 0 };
-
     u16 s = s_any;
-    int res = _parse_msg_from(msg, 9, &s, &parse_res);
+    int res = _parse_msg_from(msg, hdr_len, &s, &parse_res);
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
