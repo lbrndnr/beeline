@@ -18,13 +18,9 @@ const u16 a_id_2_mask = 0x003F;
 const u16 s_init = 0;
 const u16 s_any = 1;
 
-// these restrictions are needed to make the verifier happy
-#define MAX_BYTES 0xFFFE
-#define MAX_MATCH_MASK 31
+
 #define MAX_STATES 512
 #define MAX_TRANS 128
-#define MAX_MATCHES 32
-
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
 
 struct parse_res {

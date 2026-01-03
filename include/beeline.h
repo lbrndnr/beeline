@@ -8,6 +8,11 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+// these restrictions are needed to make the verifier happy
+#define MAX_BYTES 0x7FFF
+#define MAX_MATCHES 32
+#define MAX_MATCH_MASK 31
+
 #ifndef bpf_clamp_uminmax
 #define bpf_clamp_uminmax(VAR, UMIN, UMAX)                                                         \
     asm volatile("if %0 >= %[min] goto +2\n"                                                       \

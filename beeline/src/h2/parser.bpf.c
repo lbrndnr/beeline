@@ -71,11 +71,8 @@ const u16 s_init = 0;
 const u16 s_any = 1;
 
 // these restrictions are needed to make the verifier happy
-#define MAX_BYTES 0xFFFE
-#define MAX_MATCH_MASK 31
 #define MAX_STATES 256
 #define MAX_TRANS 256
-#define MAX_MATCHES 32
 
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
 
@@ -316,7 +313,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         return 0;
     }
 
-    if (data + 9 > data_end) return -1;
+    if (data + 9 > data_end) return 0;
 
     // u32 len = data[0] << 16 | data[1] << 8 | data[2];
     u8 type = data[3];
@@ -332,7 +329,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         bpf_map_update_elem(&dynamic_table_info, &ctx->conn, &new_info, BPF_ANY);
 
         dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx->conn);
-        if (!dt_info) return -1;
+        if (!dt_info) return 0;
     }
 
     u32 n = 0, m = 0;
@@ -416,7 +413,7 @@ int parse(struct sk_msg_md *msg) {
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
 
-    if (data + 9 > data_end) return -1;
+    if (data + 9 > data_end) return 0;
 
     u32 len = data[0] << 16 | data[1] << 8 | data[2];
     u8 type = data[3];
@@ -433,12 +430,12 @@ int parse(struct sk_msg_md *msg) {
     u16 s = s_any;
     int res = _parse_msg_from(msg, hdr_len, &s, &parse_res);
 
-    if (res < 0 && msg->size > -res) {
+    if (len > res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
             return res;
         }
 
-        res = _parse_msg_from(msg, -res, &s, &parse_res);
+        res = _parse_msg_from(msg, res, &s, &parse_res);
     }
 
     return res;
