@@ -92,7 +92,7 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
         }
         if ((a & a_done) != 0) {
             bpf_log("Done parsing at %d", i);
-            return i-1;
+            return i+1;
         }
     }
 

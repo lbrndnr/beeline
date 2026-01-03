@@ -403,7 +403,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         }
     }
 
-    return i + 1;
+    return i;
 }
 
 static __always_inline int _parse_msg_from(const struct sk_msg_md *msg, u16 start, u16* s, struct parse_res *pres) {

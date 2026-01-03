@@ -120,19 +120,20 @@ int msg_verdict(struct sk_msg_md *msg) {
 
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
     bool store_matches = false;
+    int msg_len = 0;
 
     if (is_h2) {
-        int done_idx = parse_h2(msg);
-        if (done_idx < 0) {
+        msg_len = parse_h2(msg);
+        if (msg_len < 0) {
             bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
             return SK_PASS;
         }
 
-        store_matches = (done_idx > 9);
+        store_matches = (msg_len > 9);
     }
     else {
-        int done_idx = parse_h1(msg);
-        if (done_idx < 0) {
+        msg_len = parse_h1(msg);
+        if (msg_len < 0) {
             bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
             return SK_PASS;
         }
@@ -172,6 +173,9 @@ int msg_verdict(struct sk_msg_md *msg) {
             }
         }
     }
+
+    bpf_printk("Apply verdict to %d/%dB", msg_len, msg->size);
+    bpf_msg_apply_bytes(msg, msg_len);
 
     return SK_PASS;
 }
