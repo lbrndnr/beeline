@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use beeline::{h1, h2};
 use httlib_huffman as huffman;
-use reqwest::{Client, header};
+use reqwest::{
+    Client,
+    header::{self, HeaderValue},
+};
 use utils::{
     server,
     test::{OpenObject, TestProgram},
@@ -125,6 +128,55 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
     assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some("Basic YmVlbGluZTpiZWVsaW5l")); // beeline:beeline in base64
+
+    drop(server);
+    drop(prog);
+    drop(h2);
+    drop(h1);
+}
+
+#[tokio::test]
+async fn parse_literal_header_field_no_indexing_not_indexed() {
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let server = server::launch(ECHO_ADDR).await;
+
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+
+    let h1 = h1::Parser::new()
+        .match_preface()
+        .expect("match preface")
+        .replace_parse_msg("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
+
+    let h2 = h2::Parser::new()
+        .capture_http_hdr("sensitive")
+        .expect("match sensitive")
+        .replace_parse("parse_h2")
+        .replace_extract("extract_h2_match")
+        .attach(prog.prog_fd())
+        .expect("attach parser");
+
+    let secret = "my secret";
+    let mut val = HeaderValue::from_static(secret);
+    val.set_sensitive(true);
+
+    let client = build_client();
+    let resp = client
+        .get(format!("http://{}", ECHO_ADDR))
+        .header("sensitive", val)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    assert_match_eq(&prog, 0, Some(secret));
 
     drop(server);
     drop(prog);

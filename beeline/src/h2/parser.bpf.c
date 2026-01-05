@@ -195,7 +195,7 @@ __noinline __weak int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u
         *k = 0;
         *n = 0;
     }
-    else if (*ps == H2_IDX && (*n == 6 || *n == 4) && (*k == 64 || *k == 0)) {
+    else if (*ps == H2_IDX && ((*n == 6 && *k == 64) || (*n == 4 && *k == 0))) {
         *ps = H2_KEY_LEN;
         *j = 0;
         *k = 0;
@@ -348,6 +348,8 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         u8 c = data[i];
 
         _parse_hpack(c, &ps, &n, &m, &k, &j);
+        bpf_log("%d: %d %d -> %d (%d)", i, ps, n, k, j);
+
         if (j != 0) continue;
 
         if (ps == H2_IDX) {
@@ -421,7 +423,7 @@ int parse(struct sk_msg_md *msg) {
     bool padded = flags & 0x08;
     u8 hdr_len = (padded) ? 10 : 9;
 
-    bpf_log("Parsing HTTP/2 message with length %d, type %d, padded %d", len, *type, padded);
+    bpf_log("Parsing HTTP/2 message with length %d, type %d, flags %d", len, type, flags);
 
     if (type != 0x01) {
         return len + hdr_len;
