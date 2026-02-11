@@ -67,8 +67,7 @@ const u16 a_id_mask = 0x0FFF;
 const u16 a_id_1_mask = 0x0FC0;
 const u16 a_id_2_mask = 0x003F;
 
-const u16 s_init = 0;
-const u16 s_any = 1;
+const u16 s_any = 0;
 
 // these restrictions are needed to make the verifier happy
 #define MAX_STATES 256
@@ -304,10 +303,11 @@ __noinline __weak int _add_table_entry(const struct msg_ctx *ctx __arg_nonnull, 
     return 1;
 }
 
-static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16* s, struct parse_res *pres) {
+static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16 end, u16* s, struct parse_res *pres) {
     const u8 *data = ctx->data;
     const u8 *data_end = ctx->data_end;
     u32 len = (u32)(data_end - data) & MAX_BYTES;
+    if (end < len) len = end & MAX_BYTES;
 
     if (len-start == 0) {
         return 0;
@@ -353,12 +353,11 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         if (j != 0) continue;
 
         if (ps == H2_IDX) {
-            bpf_log("parsed idx: %d, dt_size: %d", k, dt_info->size);
-
             *s = s_any;
             struct header_field *hf;
             int idx = _get_table_entry(&ctx->conn, k, dt_info->size, &hf);
             if (hf == NULL) {
+                cid = -1;
                 continue;
             }
 
@@ -367,8 +366,6 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
                 // check if we are replacing the exisiting entry, or taking
                 // the one in the table
                 if (n == 7) {
-                    bpf_log("capture: %d {%d, %d}", cid, i, idx);
-
                     pres->ms[cid & MAX_MATCH_MASK] = (struct hdr_match) {
                         .idx = idx,
                         .len = 31,
@@ -391,23 +388,18 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
                     .in_msg = true,
                 };
 
-                _add_table_entry(ctx, dt_info->size + STATIC_TABLE_SIZE, &key, &val);
-
-                bpf_log("capture: %d {%d, %d}", cid, i, k);
                 pres->ms[cid & MAX_MATCH_MASK] = val;
                 cid = -1;
             }
-
-            dt_info->size +=1;
         }
     }
 
     return i;
 }
 
-static __always_inline int _parse_msg_from(const struct sk_msg_md *msg, u16 start, u16* s, struct parse_res *pres) {
+static __always_inline int _parse_msg_from(const struct sk_msg_md *msg, u16 start, u16 end, u16* s, struct parse_res *pres) {
     struct msg_ctx ctx = _new_msg_ctx(msg);
-    return _parse_from(&ctx, start, s, pres);
+    return _parse_from(&ctx, start, end, s, pres);
 }
 
 SEC("freplace")
@@ -429,16 +421,13 @@ int parse(struct sk_msg_md *msg) {
         return len + hdr_len;
     }
 
-    u16 s = s_any;
-    int res = _parse_msg_from(msg, hdr_len, &s, &parse_res);
-
-    if (len > res) {
-        if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
-            return res;
-        }
-
-        res = _parse_msg_from(msg, res, &s, &parse_res);
+    if (bpf_msg_pull_data(msg, 0, len+hdr_len, 0) < 0) {
+        return -(data_end - data);
     }
+
+    u16 s = s_any;
+    int res = _parse_msg_from(msg, hdr_len, len+hdr_len, &s, &parse_res);
+    if (len + hdr_len > res) return -1;
 
     return res;
 }

@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use crate::h2::{Action, create_header_maps, dfa::Dfa};
 use anyhow::Result;
 use as_bytes::AsBytes;
@@ -11,7 +12,6 @@ use tracing::{Level, debug, warn};
 use types::*;
 
 pub struct Parser {
-    s_init: u16,
     s_any: u16,
 
     dfa: Dfa,
@@ -46,8 +46,7 @@ impl Parser {
         let states = vec![0, 1];
 
         Parser {
-            s_init: 0,
-            s_any: 1,
+            s_any: 0,
             dfa: Dfa::new(states.into_iter()),
             parse_fn: None,
             extract_fn: None,

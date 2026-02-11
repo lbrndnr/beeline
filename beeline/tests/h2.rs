@@ -2,10 +2,7 @@ use std::time::Duration;
 
 use beeline::{h1, h2};
 use httlib_huffman as huffman;
-use reqwest::{
-    Client,
-    header::{self, HeaderValue},
-};
+use reqwest::{Client, header};
 use utils::{
     server,
     test::{OpenObject, TestProgram},

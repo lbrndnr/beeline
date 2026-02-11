@@ -58,7 +58,7 @@ struct hdr_match {
 
 struct hdr_str {
     u32 len;
-    u8* ptr;
+    const u8* ptr;
 };
 
 struct trans {

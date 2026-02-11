@@ -5,16 +5,12 @@ use tracing::trace;
 
 pub struct DfaBuilder<'a> {
     dfa: &'a mut Dfa,
-    start: u16,
 
     /// The current state id
     sid: u16,
 
     /// the last input
     prev_trans: Option<(u16, u8)>,
-
-    /// The current capture id
-    cid: Option<u8>,
 }
 
 impl DfaBuilder<'_> {
@@ -61,19 +57,6 @@ impl DfaBuilder<'_> {
         }
         self
     }
-
-    fn get_sid(&self, input: &[u8]) -> Option<u16> {
-        let mut sid = self.start;
-        for c in input.iter() {
-            if let Some((to, _)) = self.dfa.transitions.get(&(sid, *c)) {
-                sid = *to;
-            } else {
-                return None;
-            }
-        }
-
-        Some(sid)
-    }
 }
 
 pub(crate) struct Dfa {
@@ -82,9 +65,6 @@ pub(crate) struct Dfa {
 
     /// The next free capture id
     cid: u8,
-
-    /// The next free range id
-    rid: u8,
 
     states: HashSet<u16>,
     transitions: HashMap<(u16, u8), (u16, Action)>,
@@ -95,7 +75,6 @@ impl Dfa {
         Dfa {
             sid: 0,
             cid: 0,
-            rid: 0,
             states: reserved_states.collect(),
             transitions: HashMap::new(),
         }
@@ -114,12 +93,6 @@ impl Dfa {
         let cid = self.cid;
         self.cid += 1;
         cid
-    }
-
-    fn insert_new_range(&mut self) -> u8 {
-        let rid = self.rid;
-        self.rid += 1;
-        rid
     }
 
     pub fn insert_transition(
@@ -151,9 +124,7 @@ impl Dfa {
         trace!(target: "dfa", "start_pattern: {} --> ", from);
         DfaBuilder {
             dfa: self,
-            start: from,
             sid: from,
-            cid: None,
             prev_trans: None,
         }
     }

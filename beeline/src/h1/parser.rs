@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use crate::h1::{Action, dfa::Dfa};
 use anyhow::{Result, bail};
 use libbpf_rs::{
