@@ -12,7 +12,7 @@ on:
 jobs:
     test:
         name: Test [${{ matrix.rust }}, ${{ matrix.profile }}]
-        runs-on: ubuntu-24.04
+        runs-on: ubuntu-25.04
         strategy:
             fail-fast: false
             matrix:
