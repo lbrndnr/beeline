@@ -23,8 +23,6 @@ const u16 s_any = 1;
 #define MAX_TRANS 128
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
 
-struct parse_res parse_res = { 0 };
-
 static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *action) {
     state &= 0xFF;
     input &= 0xFF;
@@ -92,14 +90,12 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
 }
 
 SEC("freplace")
-int parse_msg(struct sk_msg_md *msg) {
-    parse_res = (struct parse_res) { 0 };
-
+int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
-    int res = _parse_from(data, data_end, 0, parse_res.ms, cidx, &s);
+    int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s);
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
@@ -109,16 +105,14 @@ int parse_msg(struct sk_msg_md *msg) {
         u8 *data = (u8 *)(long)msg->data;
         u8 *data_end = (u8 *)(long)msg->data_end;
 
-        res = _parse_from(data, data_end, -res, parse_res.ms, cidx, &s);
+        res = _parse_from(data, data_end, -res, pres->ms, cidx, &s);
     }
 
     return res;
 }
 
 SEC("freplace")
-int parse_buf(const struct bpf_dynptr* buf_ptr, u32 len) {
-    parse_res = (struct parse_res) { 0 };
-
+int parse_buf(const struct bpf_dynptr* buf_ptr, u32 len, struct parse_res *pres __arg_nonnull) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
 
@@ -127,24 +121,24 @@ int parse_buf(const struct bpf_dynptr* buf_ptr, u32 len) {
 
     u8 *data_end = data + 64;
 
-    int res = _parse_from(data, data_end, 0, parse_res.ms, cidx, &s);
+    int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s);
 
     return res;
 }
 
 SEC("freplace")
-bool matched(const struct sk_msg_md *msg, u8 idx) {
+bool matched(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx) {
     if (idx >= MAX_MATCHES) return false;
 
-    struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
+    struct hdr_match m = pres->ms[idx & MAX_MATCH_MASK];
     return (m.len > 0);
 }
 
 SEC("freplace")
-int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
+int extract_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
     if (idx >= MAX_MATCHES) return -1;
 
-    struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
+    struct hdr_match m = pres->ms[idx & MAX_MATCH_MASK];
     if (m.len == 0) return -1;
 
     u8 *data = (u8 *)(long)msg->data;

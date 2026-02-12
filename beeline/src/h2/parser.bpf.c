@@ -417,7 +417,7 @@ int parse(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
 }
 
 SEC("freplace")
-bool matched(const struct sk_msg_md *msg, u8 idx, const struct parse_res *pres __arg_nonnull) {
+bool matched(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx) {
     if (idx >= MAX_MATCHES) return false;
 
     struct hdr_match m = pres->ms[idx & MAX_MATCH_MASK];
