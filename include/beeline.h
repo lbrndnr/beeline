@@ -61,6 +61,10 @@ struct hdr_str {
     const u8* ptr;
 };
 
+struct parse_res {
+    struct hdr_match ms[MAX_MATCHES];
+};
+
 struct trans {
     u16 state;
     u16 action;

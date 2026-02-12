@@ -23,10 +23,6 @@ const u16 s_any = 1;
 #define MAX_TRANS 128
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
 
-struct parse_res {
-    struct hdr_match ms[MAX_MATCHES];
-};
-
 struct parse_res parse_res = { 0 };
 
 static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *action) {

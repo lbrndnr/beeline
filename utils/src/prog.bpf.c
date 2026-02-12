@@ -1,31 +1,14 @@
-#include "vmlinux.h"
+#include "beeline.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
-char LICENSE[] SEC("license") = "GPL";
-
 #define __sink(expr) asm volatile("" : "+g"(expr))
-
-struct addr_key {
-    u32 ip4;
-    u32 port;
-};
-
-struct sock_key {
-    struct addr_key local;
-    struct addr_key remote;
-};
-
-struct hdr_str {
-    u32 len;
-    u8* ptr;
-};
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
-    __type(key, struct sock_key);
+    __type(key, struct ip4_conn);
     __type(value, int);
 } upgraded_conns SEC(".maps");
 u32 num_upgraded_conns = 0;
@@ -33,7 +16,7 @@ u32 num_upgraded_conns = 0;
 struct {
     __uint(type, BPF_MAP_TYPE_SOCKHASH);
     __uint(max_entries, 16384);
-    __type(key, struct sock_key);
+    __type(key, struct ip4_conn);
     __type(value, int);
 } sock_map SEC(".maps");
 
@@ -79,10 +62,11 @@ __noinline int parse_h1(struct sk_msg_md *msg) {
 	return ret;
 }
 
-__noinline int extract_h2_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg_nonnull) {
+__noinline int extract_h2_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
     int ret = -1;
 
 	__sink(msg);
+	__sink(pres);
 	__sink(idx);
 	__sink(str);
 	__sink(ret);
@@ -90,10 +74,11 @@ __noinline int extract_h2_match(const struct sk_msg_md *msg, u8 idx, struct hdr_
 	return ret;
 }
 
-__noinline int parse_h2(struct sk_msg_md *msg) {
+__noinline int parse_h2(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     int ret = -1;
 
 	__sink(msg);
+	__sink(pres);
 	__sink(ret);
 
 	bpf_msg_pull_data(msg, 0, msg->size, 0);
@@ -104,7 +89,7 @@ __noinline int parse_h2(struct sk_msg_md *msg) {
 SEC("sk_msg")
 int msg_verdict(struct sk_msg_md *msg) {
     // socket identifeir of the ingress connection
-    struct sock_key ikey = {
+    struct ip4_conn ikey = {
         .local = {
             .ip4 = msg->local_ip4,
             .port = msg->local_port
@@ -121,9 +106,10 @@ int msg_verdict(struct sk_msg_md *msg) {
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
     bool store_matches = false;
     int msg_len = 0;
+    struct parse_res pres = { 0 };
 
     if (is_h2) {
-        msg_len = parse_h2(msg);
+        msg_len = parse_h2(msg, &pres);
         if (msg_len < 0) {
             bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
             return SK_PASS;
@@ -154,7 +140,7 @@ int msg_verdict(struct sk_msg_md *msg) {
             struct hdr_str str = { 0 };
             int res = -1;
             if (is_h2) {
-                res = extract_h2_match(msg, i, &str);
+                res = extract_h2_match(msg, &pres, i, &str);
             }
             else {
                 res = extract_h1_match(msg, i, &str);
@@ -186,7 +172,7 @@ int monitor_sockets(struct bpf_sock_ops *ops) {
         // we don't want to get called anymore for this connection
         bpf_sock_ops_cb_flags_set(ops, 0);
 
-        struct sock_key skey = {
+        struct ip4_conn skey = {
             .local = {
                 .ip4 = ops->local_ip4,
                 .port = ops->local_port
