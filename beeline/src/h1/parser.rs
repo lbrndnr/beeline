@@ -34,6 +34,8 @@ pub struct Parser {
     parse_fn: Option<ParseFn>,
     extract_fn: Option<String>,
     matched_fn: Option<String>,
+    parse_h1_egress: Option<String>,
+    extract_h1_egress: Option<String>,
 }
 
 include!(concat!(
@@ -70,6 +72,8 @@ impl Parser {
             parse_fn: None,
             extract_fn: None,
             matched_fn: None,
+            extract_h1_egress: None,
+            parse_h1_egress: None,
         }
     }
 
@@ -108,6 +112,16 @@ impl Parser {
     /// * `extract_fn` - The name of the extract callback function in the target program
     pub fn replace_extract<S: ToString>(mut self, extract_fn: S) -> Parser {
         self.extract_fn = Some(extract_fn.to_string());
+        self
+    }
+
+    pub fn replace_h1_extract_egress<S: ToString>(mut self, extract_fn: S) -> Parser {
+        self.extract_h1_egress = Some(extract_fn.to_string());
+        self
+    }
+
+    pub fn replace_parse_h1_egress<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_h1_egress = Some(parse_fn.to_string());
         self
     }
 
@@ -244,7 +258,11 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if attachment to the target program fails.
-    pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
+    pub fn attach_ingress_egress<'obj>(
+        self,
+        target_ingress: i32,
+        target_egress: Option<i32>,
+    ) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
         let parser = self.done_on_http_hdr_end()?;
@@ -264,7 +282,7 @@ impl Parser {
                 open_skel
                     .progs
                     .parse_msg
-                    .set_attach_target(target, Some(name.clone()))?;
+                    .set_attach_target(target_ingress, Some(name.clone()))?;
             }
             &Some(ParseFn::Buf(ref name)) => {
                 open_skel.progs.parse_msg.set_autoload(false);
@@ -272,7 +290,7 @@ impl Parser {
                 open_skel
                     .progs
                     .parse_buf
-                    .set_attach_target(target, Some(name.clone()))?;
+                    .set_attach_target(target_ingress, Some(name.clone()))?;
             }
             None => bail!("No parse function specified"),
         }
@@ -284,7 +302,7 @@ impl Parser {
         open_skel
             .progs
             .matched
-            .set_attach_target(target, parser.matched_fn.clone())?;
+            .set_attach_target(target_ingress, parser.matched_fn.clone())?;
 
         open_skel
             .progs
@@ -293,7 +311,28 @@ impl Parser {
         open_skel
             .progs
             .extract_match
-            .set_attach_target(target, parser.extract_fn.clone())?;
+            .set_attach_target(target_ingress, parser.extract_fn.clone())?;
+
+        open_skel
+            .progs
+            .replaceable_parse_h1_egress
+            .set_autoload(parser.parse_h1_egress.is_some());
+        open_skel
+            .progs
+            .replaceable_extract_h1_match_egress
+            .set_autoload(parser.extract_h1_egress.is_some());
+
+        if let Some(target_egress) = target_egress {
+            open_skel
+                .progs
+                .replaceable_parse_h1_egress
+                .set_attach_target(target_egress, parser.parse_h1_egress.clone())?;
+
+            open_skel
+                .progs
+                .replaceable_extract_h1_match_egress
+                .set_attach_target(target_egress, parser.extract_h1_egress.clone())?;
+        }
 
         parser.inject(&mut open_skel)?;
 
@@ -315,9 +354,25 @@ impl Parser {
             None
         };
 
+        let parse_h1_egress = if parser.parse_h1_egress.is_some() {
+            Some(skel.progs.replaceable_parse_h1_egress.attach()?)
+        } else {
+            None
+        };
+
+        let extract_h1_egress = if parser.extract_h1_egress.is_some() {
+            Some(skel.progs.replaceable_extract_h1_match_egress.attach()?)
+        } else {
+            None
+        };
+
         debug!("Beeline http/1 attached");
 
         anyhow::Ok((parse, matched, extract))
+    }
+
+    pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
+        return self.attach_ingress_egress(target, None);
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {

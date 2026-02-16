@@ -165,3 +165,51 @@ int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg
 
     return 0;
 }
+
+SEC("freplace")
+int replaceable_parse_h1_egress(struct __sk_buff *skb) {
+  bpf_printk("Calling actual_parse_h1_egress");
+
+  parse_res = (struct parse_res){0};
+
+  u32 cidx[MAX_MATCHES] = {0};
+  u16 s = s_init;
+  u8 *data = (u8 *)(long)skb->data;
+  u8 *data_end = (u8 *)(long)skb->data_end;
+  int res = _parse_from(data, data_end, 0, parse_res.ms, cidx, &s);
+
+  if (res < 0 && skb->len > -res) {
+    if (bpf_skb_pull_data(skb, skb->len)) {
+      return res;
+    }
+
+    u8 *data = (u8 *)(long)skb->data;
+    u8 *data_end = (u8 *)(long)skb->data_end;
+
+    res = _parse_from(data, data_end, -res, parse_res.ms, cidx, &s);
+  }
+
+  return res;
+}
+
+SEC("freplace")
+int replaceable_extract_h1_match_egress(const struct __sk_buff *msg, u8 idx,
+                                        struct hdr_str *str __arg_nonnull) {
+  if (idx >= MAX_MATCHES)
+    return -1;
+
+  struct hdr_match m = parse_res.ms[idx & MAX_MATCH_MASK];
+  if (m.len == 0)
+    return -1;
+
+  u8 *data = (u8 *)(long)msg->data;
+  u8 *data_end = (u8 *)(long)msg->data_end;
+
+  if (data + m.idx + m.len > data_end)
+    return -1;
+
+  str->ptr = data + m.idx;
+  str->len = m.len;
+
+  return 0;
+}
