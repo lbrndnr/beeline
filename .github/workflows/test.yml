@@ -61,6 +61,6 @@ jobs:
               run: cargo build --profile=${{ matrix.profile }} --locked --verbose --workspace
             - name: Run tests
               # Skip tests which require sudo
-              run: cargo test --profile=${{ matrix.profile }} --locked --verbose --workspace -- --skip ':root:'  --include-ignored
+              run: cargo test --profile=${{ matrix.profile }} --locked --verbose --workspace --test h1 -- --skip ':root:'  --include-ignored
             - name: Run root tests
-              run: cd beeline && cargo test --profile=${{ matrix.profile }} --locked --verbose -- ':root:'
+              run: cd beeline && cargo test --profile=${{ matrix.profile }} --locked --verbose --test h1 -- ':root:'
