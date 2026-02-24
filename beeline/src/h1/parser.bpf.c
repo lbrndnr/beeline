@@ -1,4 +1,5 @@
 #include "beeline.h"
+#include "vmlinux.h"
 
 const u16 a_done = 1 << 14;
 const u16 a_start_capture = 1 << 13;
@@ -40,7 +41,7 @@ static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *act
     *action = t.action;
 }
 
-static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct hdr_match *ms, u32* cidx, u16* s) {
+static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct hdr_match *ms, u32* cidx, u16* s, u16 *null_prefix) {
     u32 len = (u32)(data_end - data) & MAX_BYTES;
 
     if (len-start == 0) {
@@ -51,6 +52,12 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
+
+        // skb clears the TLS header, but does not remove it
+        if (null_prefix && c == '\0' && i == *null_prefix) {
+            *null_prefix = i + 1;
+            continue;
+        }
 
         u16 a = 0;
         _next(*s, c, s, &a);
@@ -94,7 +101,7 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     u16 s = s_init;
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
-    int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s);
+    int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s, NULL);
 
     if (res < 0 && msg->size > -res) {
         if (bpf_msg_pull_data(msg, 0, msg->size, 0) < 0) {
@@ -104,14 +111,14 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
         u8 *data = (u8 *)(long)msg->data;
         u8 *data_end = (u8 *)(long)msg->data_end;
 
-        res = _parse_from(data, data_end, -res, pres->ms, cidx, &s);
+        res = _parse_from(data, data_end, -res, pres->ms, cidx, &s, NULL);
     }
 
     return res;
 }
 
 SEC("freplace")
-int parse_buf(const struct bpf_dynptr* buf_ptr, u32 len, struct parse_res *pres __arg_nonnull) {
+int parse_buf(const struct bpf_dynptr* buf_ptr, u32 len, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
 
@@ -120,7 +127,7 @@ int parse_buf(const struct bpf_dynptr* buf_ptr, u32 len, struct parse_res *pres 
 
     u8 *data_end = data + 64;
 
-    int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s);
+    int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s, null_prefix);
 
     return res;
 }

@@ -276,7 +276,7 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
     return 0;
 }
 
-static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16 end, u16* s, struct parse_res *pres) {
+static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16 end, u16* s, struct parse_res *pres, u16 *null_prefix) {
     const u8 *data = ctx->data;
     const u8 *data_end = ctx->data_end;
     u32 len = (u32)(data_end - data) & MAX_BYTES;
@@ -320,6 +320,12 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
+
+        // skb clears the TLS header, but does not remove it
+        if (null_prefix && c == '\0' && i == *null_prefix) {
+            *null_prefix = i + 1;
+            continue;
+        }
 
         _parse_hpack(c, &ps, &n, &m, &k, &j);
         bpf_log("%d: %d %d -> %d (%d)", i, ps, n, k, j);
@@ -383,11 +389,11 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
 
 static __always_inline int _parse_msg_from(const struct sk_msg_md *msg, u16 start, u16 end, u16* s, struct parse_res *pres) {
     struct msg_ctx ctx = _new_msg_ctx(msg);
-    return _parse_from(&ctx, start, end, s, pres);
+    return _parse_from(&ctx, start, end, s, pres, NULL);
 }
 
 SEC("freplace")
-int parse(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
+int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
 

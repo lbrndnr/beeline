@@ -190,13 +190,16 @@ impl Parser {
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(&mut open_obj)?;
         if tracing::event_enabled!(Level::TRACE) {
-            open_skel.progs.parse.set_log_level(1);
+            open_skel.progs.parse_msg.set_log_level(1);
         }
 
-        open_skel.progs.parse.set_autoload(self.parse_fn.is_some());
         open_skel
             .progs
-            .parse
+            .parse_msg
+            .set_autoload(self.parse_fn.is_some());
+        open_skel
+            .progs
+            .parse_msg
             .set_attach_target(target, self.parse_fn.clone())?;
 
         open_skel
@@ -221,7 +224,7 @@ impl Parser {
 
         let skel = open_skel.load()?;
         let parse = if self.parse_fn.is_some() {
-            Some(skel.progs.parse.attach()?)
+            Some(skel.progs.parse_msg.attach()?)
         } else {
             None
         };
