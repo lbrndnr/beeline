@@ -3,6 +3,11 @@ name = "beeline"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["h1", "h2"]
+h1 = []
+h2 = []
+
 [dependencies]
 anyhow = "1.0.102"
 as-bytes = "0.2.0"

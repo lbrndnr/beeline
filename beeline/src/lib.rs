@@ -2,7 +2,10 @@ use anyhow::Result;
 use libbpf_rs::{Mut, OpenProgramImpl, PrintLevel};
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "h1")]
 pub mod h1;
+
+#[cfg(feature = "h2")]
 pub mod h2;
 
 fn print(level: PrintLevel, msg: String) {
