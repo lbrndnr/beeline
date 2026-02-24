@@ -66,7 +66,7 @@ async fn parse_indexed_header_field() {
     let h2 = h2::Parser::new()
         .capture_http_hdr("method")
         .expect("match method")
-        .replace_parse("parse_h2")
+        .replace_parse_msg("parse_h2")
         .replace_extract("extract_h2_match")
         .attach(prog.prog_fd())
         .expect("attach parser");
@@ -110,7 +110,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
     let h2 = h2::Parser::new()
         .capture_http_hdr("authorization")
         .expect("match authorization")
-        .replace_parse("parse_h2")
+        .replace_parse_msg("parse_h2")
         .replace_extract("extract_h2_match")
         .attach(prog.prog_fd())
         .expect("attach parser");
@@ -155,7 +155,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 //     let h2 = h2::Parser::new()
 //         .capture_http_hdr("sensitive")
 //         .expect("match sensitive")
-//         .replace_parse("parse_h2")
+//         .replace_parse_msg("parse_h2")
 //         .replace_extract("extract_h2_match")
 //         .attach(prog.prog_fd())
 //         .expect("attach parser");
@@ -206,7 +206,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
         .expect("match user-agent")
         .capture_http_hdr("path")
         .expect("match path")
-        .replace_parse("parse_h2")
+        .replace_parse_msg("parse_h2")
         .replace_extract("extract_h2_match")
         .attach(prog.prog_fd())
         .expect("attach parser");
@@ -256,7 +256,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
         .expect("match user-agent")
         .capture_http_hdr("accept-language")
         .expect("match accept-language")
-        .replace_parse("parse_h2")
+        .replace_parse_msg("parse_h2")
         .replace_extract("extract_h2_match")
         .attach(prog.prog_fd())
         .expect("attach parser");
@@ -333,7 +333,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 //         .expect("match user-agent")
 //         .capture_http_hdr("accept-language")
 //         .expect("match accept-language")
-//         .replace_parse("parse_h2")
+//         .replace_parse_msg("parse_h2")
 //         .replace_extract("extract_h2_match")
 //         .attach(prog.prog_fd())
 //         .expect("attach parser");

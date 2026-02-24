@@ -99,6 +99,23 @@ static __always_inline struct msg_ctx _new_msg_ctx(const struct sk_msg_md *msg) 
     };
 }
 
+static __always_inline struct msg_ctx _new_skb_ctx(const struct __sk_buff *skb) {
+    return (struct msg_ctx) {
+        .data = (u8 *)(long)skb->data,
+        .data_end = (u8 *)(long)skb->data_end,
+        .conn = {
+            .local = {
+                .ip4 = skb->local_ip4,
+                .port = skb->local_port
+            },
+            .remote = {
+                .ip4 = skb->remote_ip4,
+                .port = bpf_ntohl(skb->remote_port)
+            }
+        }
+    };
+}
+
 static __always_inline struct dynamic_table_key _new_dynamic_table_key(const struct ip4_conn *conn, u32 idx) {
     return (struct dynamic_table_key) {
         .conn = *conn,
@@ -392,6 +409,11 @@ static __always_inline int _parse_msg_from(const struct sk_msg_md *msg, u16 star
     return _parse_from(&ctx, start, end, s, pres, NULL);
 }
 
+static __always_inline int _parse_skb_from(const struct __sk_buff *skb, u16 start, u16 end, u16* s, struct parse_res *pres, u16 *null_prefix) {
+    struct msg_ctx ctx = _new_skb_ctx(skb);
+    return _parse_from(&ctx, start, end, s, pres, null_prefix);
+}
+
 SEC("freplace")
 int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     u8 *data = (u8 *)(long)msg->data;
@@ -418,6 +440,71 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     u16 s = s_any;
     int res = _parse_msg_from(msg, hdr_len, len+hdr_len, &s, pres);
     if (len + hdr_len > res) return -1;
+
+    return res;
+}
+
+SEC("freplace")
+int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+    u8 *data = (u8 *)(long)skb->data;
+    u8 *data_end = (u8 *)(long)skb->data_end;
+
+    if (data + 9 > data_end) return 0;
+
+    u32 len = data[0] << 16 | data[1] << 8 | data[2];
+    u8 type = data[3];
+    u8 flags = data[4];
+    bool padded = flags & 0x08;
+    u8 hdr_len = (padded) ? 10 : 9;
+
+    bpf_log("Parsing HTTP/2 sk_buff with length %d, type %d, flags %d", len, type, flags);
+
+    if (type != 0x01) {
+        return len + hdr_len;
+    }
+
+    if (bpf_skb_pull_data(skb, len+hdr_len) < 0) {
+        return -(data_end - data);
+    }
+
+    u16 s = s_any;
+    int res = _parse_skb_from(skb, hdr_len, len+hdr_len, &s, pres, null_prefix);
+    if (len + hdr_len > res) return -1;
+
+    return res;
+}
+
+SEC("freplace")
+int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+    u8 *data = bpf_dynptr_data(buf_ptr, 0, 9);
+    if (data == NULL) return -1;
+
+    u32 len = data[0] << 16 | data[1] << 8 | data[2];
+    u8 type = data[3];
+    u8 flags = data[4];
+    bool padded = flags & 0x08;
+    u8 hdr_len = (padded) ? 10 : 9;
+
+    bpf_log("Parsing HTTP/2 buf with length %d, type %d, flags %d", len, type, flags);
+
+    if (type != 0x01) {
+        return len + hdr_len;
+    }
+
+    u32 cidx[MAX_MATCHES] = { 0 };
+    u16 s = s_any;
+
+    data = bpf_dynptr_data(buf_ptr, 0, len + hdr_len);
+    if (data == NULL) return -1;
+
+    u8 *data_end = data + len + hdr_len;
+    struct msg_ctx ctx = {
+        .data = data,
+        .data_end = data_end,
+        .conn = *conn
+    };
+
+    int res = _parse_from(&ctx, hdr_len, len+hdr_len, &s, pres, null_prefix);
 
     return res;
 }

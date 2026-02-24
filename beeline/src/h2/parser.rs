@@ -1,5 +1,8 @@
 #![allow(unused_imports)]
-use crate::h2::{Action, create_header_maps, dfa::Dfa};
+use crate::{
+    autoload_and_attach,
+    h2::{Action, create_header_maps, dfa::Dfa},
+};
 use anyhow::Result;
 use as_bytes::AsBytes;
 use httlib_huffman as huffman;
@@ -16,7 +19,9 @@ pub struct Parser {
 
     dfa: Dfa,
 
-    parse_fn: Option<String>,
+    parse_msg_fn: Option<String>,
+    parse_buf_fn: Option<String>,
+    parse_skb_fn: Option<String>,
     extract_fn: Option<String>,
     matched_fn: Option<String>,
 }
@@ -45,7 +50,9 @@ impl Parser {
         Parser {
             s_any: 0,
             dfa: Dfa::new(states.into_iter()),
-            parse_fn: None,
+            parse_msg_fn: None,
+            parse_buf_fn: None,
+            parse_skb_fn: None,
             extract_fn: None,
             matched_fn: None,
         }
@@ -57,8 +64,18 @@ impl Parser {
     /// # Arguments
     ///
     /// * `parse_fn` - The name of the function to replace in the target program
-    pub fn replace_parse<S: ToString>(mut self, parse_fn: S) -> Parser {
-        self.parse_fn = Some(parse_fn.to_string());
+    pub fn replace_parse_msg<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_msg_fn = Some(parse_fn.to_string());
+        self
+    }
+
+    pub fn replace_parse_skb<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_skb_fn = Some(parse_fn.to_string());
+        self
+    }
+
+    pub fn replace_parse_buf<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_buf_fn = Some(parse_fn.to_string());
         self
     }
 
@@ -183,7 +200,7 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if attachment to the target program fails.
-    pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
+    pub fn attach<'obj>(self, target: i32) -> Result<(Vec<Link>, Option<Link>, Option<Link>)> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
         let skel_builder = ParserSkelBuilder::default();
@@ -191,43 +208,36 @@ impl Parser {
         let mut open_skel = skel_builder.open(&mut open_obj)?;
         if tracing::event_enabled!(Level::TRACE) {
             open_skel.progs.parse_msg.set_log_level(1);
+            open_skel.progs.parse_skb.set_log_level(1);
+            open_skel.progs.parse_buf.set_log_level(1);
         }
 
-        open_skel
-            .progs
-            .parse_msg
-            .set_autoload(self.parse_fn.is_some());
-        open_skel
-            .progs
-            .parse_msg
-            .set_attach_target(target, self.parse_fn.clone())?;
+        let progs = vec![
+            (&mut open_skel.progs.parse_msg, self.parse_msg_fn.clone()),
+            (&mut open_skel.progs.parse_skb, self.parse_skb_fn.clone()),
+            (&mut open_skel.progs.parse_buf, self.parse_buf_fn.clone()),
+            (&mut open_skel.progs.matched, self.matched_fn.clone()),
+            (&mut open_skel.progs.extract_match, self.extract_fn.clone()),
+        ];
 
-        open_skel
-            .progs
-            .matched
-            .set_autoload(self.matched_fn.is_some());
-        open_skel
-            .progs
-            .matched
-            .set_attach_target(target, self.matched_fn.clone())?;
-
-        open_skel
-            .progs
-            .extract_match
-            .set_autoload(self.extract_fn.is_some());
-        open_skel
-            .progs
-            .extract_match
-            .set_attach_target(target, self.extract_fn.clone())?;
+        for (prog, func) in progs {
+            autoload_and_attach(prog, target, func)?;
+        }
 
         self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        let parse = if self.parse_fn.is_some() {
-            Some(skel.progs.parse_msg.attach()?)
-        } else {
-            None
-        };
+
+        let mut parse = Vec::new();
+        if self.parse_msg_fn.is_some() {
+            parse.push(skel.progs.parse_msg.attach()?);
+        }
+        if self.parse_skb_fn.is_some() {
+            parse.push(skel.progs.parse_skb.attach()?);
+        }
+        if self.parse_buf_fn.is_some() {
+            parse.push(skel.progs.parse_buf.attach()?);
+        }
         let matched = if self.matched_fn.is_some() {
             Some(skel.progs.matched.attach()?)
         } else {
