@@ -1,30 +1,18 @@
 #![allow(unused_imports)]
-use crate::h1::{Action, dfa::Dfa};
+use crate::{
+    autoload_and_attach,
+    h1::{Action, dfa::Dfa},
+};
 use anyhow::{Result, bail};
 use libbpf_rs::{
     Link, MapCore, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, SkelBuilder},
 };
-use std::mem::MaybeUninit;
+use std::{collections::HashMap, mem::MaybeUninit};
 use tracing::{Level, debug, warn};
 use types::*;
 
 const CRLF: &str = "\r\n";
-
-#[derive(Debug, Clone)]
-enum ParseFn {
-    Buf(String),
-    Msg(String),
-}
-
-impl ToString for ParseFn {
-    fn to_string(&self) -> String {
-        match self {
-            ParseFn::Buf(name) => name.clone(),
-            ParseFn::Msg(name) => name.clone(),
-        }
-    }
-}
 
 pub struct Parser {
     s_init: u16,
@@ -32,7 +20,9 @@ pub struct Parser {
 
     dfa: Dfa,
 
-    parse_fn: Option<ParseFn>,
+    parse_msg_fn: Option<String>,
+    parse_buf_fn: Option<String>,
+    parse_skb_fn: Option<String>,
     extract_fn: Option<String>,
     matched_fn: Option<String>,
 }
@@ -65,7 +55,9 @@ impl Parser {
             s_init: 0,
             s_any: 1,
             dfa: Dfa::new(states.into_iter()),
-            parse_fn: None,
+            parse_msg_fn: None,
+            parse_buf_fn: None,
+            parse_skb_fn: None,
             extract_fn: None,
             matched_fn: None,
         }
@@ -78,12 +70,17 @@ impl Parser {
     ///
     /// * `parse_fn` - The name of the function to replace in the target program
     pub fn replace_parse_msg<S: ToString>(mut self, parse_fn: S) -> Parser {
-        self.parse_fn = Some(ParseFn::Msg(parse_fn.to_string()));
+        self.parse_msg_fn = Some(parse_fn.to_string());
+        self
+    }
+
+    pub fn replace_parse_skb<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_skb_fn = Some(parse_fn.to_string());
         self
     }
 
     pub fn replace_parse_buf<S: ToString>(mut self, parse_fn: S) -> Parser {
-        self.parse_fn = Some(ParseFn::Buf(parse_fn.to_string()));
+        self.parse_buf_fn = Some(parse_fn.to_string());
         self
     }
 
@@ -242,7 +239,7 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if attachment to the target program fails.
-    pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
+    pub fn attach<'obj>(self, target: i32) -> Result<(Vec<Link>, Option<Link>, Option<Link>)> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
         let parser = self.done_on_http_hdr_end()?;
@@ -253,55 +250,39 @@ impl Parser {
         if tracing::event_enabled!(Level::TRACE) {
             open_skel.progs.parse_msg.set_log_level(1);
             open_skel.progs.parse_buf.set_log_level(1);
+            open_skel.progs.parse_buf.set_log_level(1);
         }
 
-        match &parser.parse_fn {
-            &Some(ParseFn::Msg(ref name)) => {
-                open_skel.progs.parse_msg.set_autoload(true);
-                open_skel.progs.parse_buf.set_autoload(false);
-                open_skel
-                    .progs
-                    .parse_msg
-                    .set_attach_target(target, Some(name.clone()))?;
-            }
-            &Some(ParseFn::Buf(ref name)) => {
-                open_skel.progs.parse_msg.set_autoload(false);
-                open_skel.progs.parse_buf.set_autoload(true);
-                open_skel
-                    .progs
-                    .parse_buf
-                    .set_attach_target(target, Some(name.clone()))?;
-            }
-            None => bail!("No parse function specified"),
+        let progs = vec![
+            (&mut open_skel.progs.parse_msg, parser.parse_msg_fn.clone()),
+            (&mut open_skel.progs.parse_skb, parser.parse_skb_fn.clone()),
+            (&mut open_skel.progs.parse_buf, parser.parse_buf_fn.clone()),
+            (&mut open_skel.progs.matched, parser.matched_fn.clone()),
+            (
+                &mut open_skel.progs.extract_match,
+                parser.extract_fn.clone(),
+            ),
+        ];
+
+        for (prog, func) in progs {
+            autoload_and_attach(prog, target, func)?;
         }
-
-        open_skel
-            .progs
-            .matched
-            .set_autoload(parser.matched_fn.is_some());
-        open_skel
-            .progs
-            .matched
-            .set_attach_target(target, parser.matched_fn.clone())?;
-
-        open_skel
-            .progs
-            .extract_match
-            .set_autoload(parser.extract_fn.is_some());
-        open_skel
-            .progs
-            .extract_match
-            .set_attach_target(target, parser.extract_fn.clone())?;
 
         parser.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
 
-        let parse = match &parser.parse_fn {
-            &Some(ParseFn::Msg(_)) => Some(skel.progs.parse_msg.attach()?),
-            &Some(ParseFn::Buf(_)) => Some(skel.progs.parse_buf.attach()?),
-            None => bail!("No parse function specified"),
-        };
+        let mut parse = Vec::new();
+        if parser.parse_msg_fn.is_some() {
+            parse.push(skel.progs.parse_msg.attach()?);
+        }
+        if parser.parse_skb_fn.is_some() {
+            parse.push(skel.progs.parse_skb.attach()?);
+        }
+        if parser.parse_buf_fn.is_some() {
+            parse.push(skel.progs.parse_buf.attach()?);
+        }
+
         let matched = if parser.matched_fn.is_some() {
             Some(skel.progs.matched.attach()?)
         } else {

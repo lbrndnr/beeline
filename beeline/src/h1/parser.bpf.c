@@ -1,5 +1,6 @@
 #include "beeline.h"
 #include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
 
 const u16 a_done = 1 << 14;
 const u16 a_start_capture = 1 << 13;
@@ -118,14 +119,36 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
 }
 
 SEC("freplace")
-int parse_buf(const struct bpf_dynptr* buf_ptr, u32 len, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+    u32 cidx[MAX_MATCHES] = { 0 };
+    u16 s = s_init;
+    u8 *data = (u8 *)(long)skb->data;
+    u8 *data_end = (u8 *)(long)skb->data_end;
+    int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s, NULL);
+
+    if (res < 0 && skb->len > -res) {
+        if (bpf_skb_pull_data(skb, skb->len) < 0) {
+            return res;
+        }
+
+        u8 *data = (u8 *)(long)skb->data;
+        u8 *data_end = (u8 *)(long)skb->data_end;
+
+        res = _parse_from(data, data_end, -res, pres->ms, cidx, &s, NULL);
+    }
+
+    return res;
+}
+
+SEC("freplace")
+int parse_buf(const struct bpf_dynptr *buf_ptr, u32 len, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
 
-    u8 *data = bpf_dynptr_data(buf_ptr, 0, 64);
+    u8 *data = bpf_dynptr_data(buf_ptr, 0, len);
     if (data == NULL) return -1;
 
-    u8 *data_end = data + 64;
+    u8 *data_end = data + len;
 
     int res = _parse_from(data, data_end, 0, pres->ms, cidx, &s, null_prefix);
 
