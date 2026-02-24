@@ -20,7 +20,7 @@ use std::{
 use tracing::{Level, debug, info, warn};
 use types::*;
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/prog.skel.rs"));
+include!(concat!(env!("OUT_DIR"), "/prog.skel.rs"));
 
 fn print(level: PrintLevel, msg: String) {
     let msg = msg.trim_start_matches("libbpf:").trim();

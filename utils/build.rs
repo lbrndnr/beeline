@@ -9,9 +9,11 @@ fn main() {
     let src = PathBuf::from(&manifest_dir).join("src").join("prog.bpf.c");
     println!("cargo:rerun-if-changed={src:?}");
 
-    let out = PathBuf::from(&manifest_dir)
-        .join("src")
-        .join("prog.skel.rs");
+    let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script");
+    let out_dir = PathBuf::from(&out_dir);
+    let out = out_dir.clone().join("prog.skel.rs");
+
+
     SkeletonBuilder::new()
         .source(&src)
         .clang_args([OsStr::new("-I"), OsStr::new("../include")])

@@ -1,5 +1,4 @@
 #include "beeline.h"
-#include "vmlinux.h"
 
 const u16 a_done = 1 << 14;
 const u16 a_start_capture = 1 << 13;

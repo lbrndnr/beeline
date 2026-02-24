@@ -37,10 +37,7 @@ pub struct Parser {
     matched_fn: Option<String>,
 }
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/h1/parser.skel.rs"
-));
+include!(concat!(env!("OUT_DIR"), "/h1/parser.skel.rs"));
 
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {

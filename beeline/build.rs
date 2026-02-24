@@ -1,11 +1,16 @@
 use libbpf_cargo::SkeletonBuilder;
-use std::{env, ffi::OsStr, path::PathBuf};
+use std::{env, ffi::OsStr, fs, path::PathBuf};
 
 fn build_and_generate(dir: &PathBuf, log_level: usize) {
+    let last_path_comp = dir.iter().last().unwrap().to_str().unwrap();
     let src = dir.clone().join("parser.bpf.c");
     println!("cargo:rerun-if-changed={src:?}");
 
-    let out = dir.clone().join("parser.skel.rs");
+    let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script");
+    let out_dir = PathBuf::from(&out_dir).join(last_path_comp);
+    fs::create_dir_all(&out_dir).unwrap();
+    let out = out_dir.clone().join("parser.skel.rs");
+
     SkeletonBuilder::new()
         .source(&src)
         .clang_args([
