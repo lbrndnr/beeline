@@ -262,7 +262,13 @@ impl Parser {
         self,
         target_ingress: i32,
         target_egress: Option<i32>,
-    ) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
+    ) -> Result<(
+        Option<Link>,
+        Option<Link>,
+        Option<Link>,
+        Option<Link>,
+        Option<Link>,
+    )> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
         let parser = self.done_on_http_hdr_end()?;
@@ -368,10 +374,19 @@ impl Parser {
 
         debug!("Beeline http/1 attached");
 
-        anyhow::Ok((parse, matched, extract))
+        anyhow::Ok((parse, matched, extract, parse_h1_egress, extract_h1_egress))
     }
 
-    pub fn attach<'obj>(self, target: i32) -> Result<(Option<Link>, Option<Link>, Option<Link>)> {
+    pub fn attach<'obj>(
+        self,
+        target: i32,
+    ) -> Result<(
+        Option<Link>,
+        Option<Link>,
+        Option<Link>,
+        Option<Link>,
+        Option<Link>,
+    )> {
         return self.attach_ingress_egress(target, None);
     }
 
