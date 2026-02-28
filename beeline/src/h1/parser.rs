@@ -261,7 +261,7 @@ impl Parser {
     pub fn attach_ingress_egress<'obj>(
         self,
         target_ingress: i32,
-        target_egress: Option<i32>,
+        target_egress: Option<(i32, i32)>,
     ) -> Result<(
         Option<Link>,
         Option<Link>,
@@ -328,16 +328,18 @@ impl Parser {
             .replaceable_extract_h1_match_egress
             .set_autoload(parser.extract_h1_egress.is_some());
 
-        if let Some(target_egress) = target_egress {
-            open_skel
-                .progs
-                .replaceable_parse_h1_egress
-                .set_attach_target(target_egress, parser.parse_h1_egress.clone())?;
+        if let Some((stream_parser_egress_fd, stream_verdict_egress_fd)) = target_egress {
+            for loop_target_egress in vec![stream_parser_egress_fd, stream_verdict_egress_fd] {
+                open_skel
+                    .progs
+                    .replaceable_parse_h1_egress
+                    .set_attach_target(loop_target_egress, parser.parse_h1_egress.clone())?;
 
-            open_skel
-                .progs
-                .replaceable_extract_h1_match_egress
-                .set_attach_target(target_egress, parser.extract_h1_egress.clone())?;
+                open_skel
+                    .progs
+                    .replaceable_extract_h1_match_egress
+                    .set_attach_target(loop_target_egress, parser.extract_h1_egress.clone())?;
+            }
         }
 
         parser.inject(&mut open_skel)?;
