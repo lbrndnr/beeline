@@ -268,6 +268,8 @@ impl Parser {
         Option<Link>,
         Option<Link>,
         Option<Link>,
+        Option<Link>,
+        Option<Link>,
     )> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
@@ -321,25 +323,42 @@ impl Parser {
 
         open_skel
             .progs
-            .replaceable_parse_h1_egress
+            .replaceable_extract_h1_match_egress_stream_parser
             .set_autoload(parser.parse_h1_egress.is_some());
         open_skel
             .progs
-            .replaceable_extract_h1_match_egress
+            .replaceable_parse_h1_egress_stream_parser
             .set_autoload(parser.extract_h1_egress.is_some());
 
-        if let Some((stream_parser_egress_fd, stream_verdict_egress_fd)) = target_egress {
-            for loop_target_egress in vec![stream_parser_egress_fd, stream_verdict_egress_fd] {
-                open_skel
-                    .progs
-                    .replaceable_parse_h1_egress
-                    .set_attach_target(loop_target_egress, parser.parse_h1_egress.clone())?;
+        open_skel
+            .progs
+            .replaceable_extract_h1_match_egress_stream_verdict
+            .set_autoload(parser.parse_h1_egress.is_some());
+        open_skel
+            .progs
+            .replaceable_parse_h1_egress_stream_verdict
+            .set_autoload(parser.extract_h1_egress.is_some());
 
-                open_skel
-                    .progs
-                    .replaceable_extract_h1_match_egress
-                    .set_attach_target(loop_target_egress, parser.extract_h1_egress.clone())?;
-            }
+        if let Some((stream_verdict_egress_fd, stream_parser_egress_fd)) = target_egress {
+            open_skel
+                .progs
+                .replaceable_parse_h1_egress_stream_parser
+                .set_attach_target(stream_parser_egress_fd, parser.parse_h1_egress.clone())?;
+
+            open_skel
+                .progs
+                .replaceable_extract_h1_match_egress_stream_parser
+                .set_attach_target(stream_parser_egress_fd, parser.extract_h1_egress.clone())?;
+
+            open_skel
+                .progs
+                .replaceable_parse_h1_egress_stream_verdict
+                .set_attach_target(stream_verdict_egress_fd, parser.parse_h1_egress.clone())?;
+
+            open_skel
+                .progs
+                .replaceable_extract_h1_match_egress_stream_verdict
+                .set_attach_target(stream_verdict_egress_fd, parser.extract_h1_egress.clone())?;
         }
 
         parser.inject(&mut open_skel)?;
@@ -362,27 +381,41 @@ impl Parser {
             None
         };
 
-        let parse_h1_egress = if parser.parse_h1_egress.is_some() {
-            Some(skel.progs.replaceable_parse_h1_egress.attach()?)
+        let parse_h1_egress_stream_parser = if parser.parse_h1_egress.is_some() {
+            Some(skel.progs.replaceable_parse_h1_egress_stream_parser.attach()?)
         } else {
             None
         };
 
-        let extract_h1_egress = if parser.extract_h1_egress.is_some() {
-            Some(skel.progs.replaceable_extract_h1_match_egress.attach()?)
+        let extract_h1_egress_stream_parser = if parser.extract_h1_egress.is_some() {
+            Some(skel.progs.replaceable_extract_h1_match_egress_stream_parser.attach()?)
+        } else {
+            None
+        };
+
+        let parse_h1_egress_stream_verdict = if parser.parse_h1_egress.is_some() {
+            Some(skel.progs.replaceable_parse_h1_egress_stream_verdict.attach()?)
+        } else {
+            None
+        };
+
+        let extract_h1_egress_stream_verdict = if parser.extract_h1_egress.is_some() {
+            Some(skel.progs.replaceable_extract_h1_match_egress_stream_verdict.attach()?)
         } else {
             None
         };
 
         debug!("Beeline http/1 attached");
 
-        anyhow::Ok((parse, matched, extract, parse_h1_egress, extract_h1_egress))
+        anyhow::Ok((parse, matched, extract, parse_h1_egress_stream_parser, extract_h1_egress_stream_parser, parse_h1_egress_stream_verdict, extract_h1_egress_stream_verdict))
     }
 
     pub fn attach<'obj>(
         self,
         target: i32,
     ) -> Result<(
+        Option<Link>,
+        Option<Link>,
         Option<Link>,
         Option<Link>,
         Option<Link>,

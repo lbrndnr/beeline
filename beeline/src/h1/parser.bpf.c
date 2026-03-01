@@ -166,7 +166,7 @@ int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg
     return 0;
 }
 
-SEC("freplace")
+
 int replaceable_parse_h1_egress(struct __sk_buff *skb) {
   bpf_printk("Calling actual_parse_h1_egress");
 
@@ -192,7 +192,6 @@ int replaceable_parse_h1_egress(struct __sk_buff *skb) {
   return res;
 }
 
-SEC("freplace")
 int replaceable_extract_h1_match_egress(const struct __sk_buff *msg, u8 idx,
                                         struct hdr_str *str __arg_nonnull) {
   if (idx >= MAX_MATCHES)
@@ -212,4 +211,27 @@ int replaceable_extract_h1_match_egress(const struct __sk_buff *msg, u8 idx,
   str->len = m.len;
 
   return 0;
+}
+
+
+SEC("freplace")
+int replaceable_parse_h1_egress_stream_verdict(struct __sk_buff *skb) {
+    return replaceable_parse_h1_egress(skb);
+}
+
+SEC("freplace")
+int replaceable_parse_h1_egress_stream_parser(struct __sk_buff *skb) {
+    return replaceable_parse_h1_egress(skb);
+}
+
+SEC("freplace")
+int replaceable_extract_h1_match_egress_stream_verdict(const struct __sk_buff *msg, u8 idx,
+                                        struct hdr_str *str __arg_nonnull) {
+    return replaceable_extract_h1_match_egress(msg, idx, str);
+}
+
+SEC("freplace")
+int replaceable_extract_h1_match_egress_stream_parser(const struct __sk_buff *msg, u8 idx,
+                                        struct hdr_str *str __arg_nonnull) {
+    return replaceable_extract_h1_match_egress(msg, idx, str);
 }
