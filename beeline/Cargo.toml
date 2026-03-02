@@ -19,7 +19,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [build-dependencies]
-libbpf-cargo = "0.26.0"
+libbpf-cargo = "0.26.1"
 
 [dev-dependencies]
 reqwest = "0.13.2"
