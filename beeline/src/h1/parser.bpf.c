@@ -168,7 +168,7 @@ int extract_match(const struct sk_msg_md *msg, u8 idx, struct hdr_str* str __arg
 
 
 int replaceable_parse_h1_egress(struct __sk_buff *skb) {
-  bpf_printk("Calling actual_parse_h1_egress");
+  //bpf_printk("Calling actual_parse_h1_egress");
 
   parse_res = (struct parse_res){0};
 
