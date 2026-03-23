@@ -1,3 +1,4 @@
 /target
+/include/vmlinux.h
 *.skel.rs
 .clangd
