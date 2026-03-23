@@ -56,6 +56,8 @@ jobs:
                   sudo apt-get install --yes --no-install-recommends clang-18 libelf-dev zlib1g-dev linux-headers-$(uname -r)
                   sudo ln -s /usr/include/asm-generic /usr/include/asm
                   sudo rm -f /bin/clang && sudo ln -s /usr/bin/clang-18 /bin/clang
+                  git clone --recurse-submodules https://github.com/libbpf/bpftool.git
+                  cd bpftool/src && make && sudo make install
             - name: Dump BTF
               run: |
                   bpftool btf dump file /sys/kernel/btf/vmlinux format c > include/vmlinux.h
