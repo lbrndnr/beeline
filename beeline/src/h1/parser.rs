@@ -340,45 +340,45 @@ impl Parser {
             parse.push(skel.progs.parse_buf.attach()?);
         }
 
-        // let parse_h1_egress_stream_parser = if parser.parse_h1_egress.is_some() {
-        //     Some(skel.progs.replaceable_parse_h1_egress_stream_parser.attach()?)
-        // } else {
-        //     None
-        // };
+        let parse_h1_egress_stream_parser = if parser.parse_h1_egress.is_some() {
+            Some(skel.progs.replaceable_parse_h1_egress_stream_parser.attach()?)
+        } else {
+            None
+        };
 
-        // let extract_h1_egress_stream_parser = if parser.extract_h1_egress.is_some() {
-        //     Some(skel.progs.replaceable_extract_h1_match_egress_stream_parser.attach()?)
-        // } else {
-        //     None
-        // };
+        let extract_h1_egress_stream_parser = if parser.extract_h1_egress.is_some() {
+            Some(skel.progs.replaceable_extract_h1_match_egress_stream_parser.attach()?)
+        } else {
+            None
+        };
 
-        // let parse_h1_egress_stream_verdict = if parser.parse_h1_egress.is_some() {
-        //     Some(skel.progs.replaceable_parse_h1_egress_stream_verdict.attach()?)
-        // } else {
-        //     None
-        // };
+        let parse_h1_egress_stream_verdict = if parser.parse_h1_egress.is_some() {
+            Some(skel.progs.replaceable_parse_h1_egress_stream_verdict.attach()?)
+        } else {
+            None
+        };
 
-        // let extract_h1_egress_stream_verdict = if parser.extract_h1_egress.is_some() {
-        //     Some(skel.progs.replaceable_extract_h1_match_egress_stream_verdict.attach()?)
-        // } else {
-        //     None
-        // };
+        let extract_h1_egress_stream_verdict = if parser.extract_h1_egress.is_some() {
+            Some(skel.progs.replaceable_extract_h1_match_egress_stream_verdict.attach()?)
+        } else {
+            None
+        };
 
-        // if let Some(parse_h1_egress_stream_parser) = parse_h1_egress_stream_parser {
-        //     parse.push(parse_h1_egress_stream_parser);
-        // }
+        if let Some(parse_h1_egress_stream_parser) = parse_h1_egress_stream_parser {
+            parse.push(parse_h1_egress_stream_parser);
+        }
 
-        // if let Some(extract_h1_egress_stream_parser) = extract_h1_egress_stream_parser {
-        //     parse.push(extract_h1_egress_stream_parser);
-        // }
+        if let Some(extract_h1_egress_stream_parser) = extract_h1_egress_stream_parser {
+            parse.push(extract_h1_egress_stream_parser);
+        }
 
-        // if let Some(parse_h1_egress_stream_verdict) = parse_h1_egress_stream_verdict {
-        //     parse.push(parse_h1_egress_stream_verdict);
-        // }
+        if let Some(parse_h1_egress_stream_verdict) = parse_h1_egress_stream_verdict {
+            parse.push(parse_h1_egress_stream_verdict);
+        }
 
-        // if let Some(extract_h1_egress_stream_verdict) = extract_h1_egress_stream_verdict {
-        //     parse.push(extract_h1_egress_stream_verdict);
-        // }
+        if let Some(extract_h1_egress_stream_verdict) = extract_h1_egress_stream_verdict {
+            parse.push(extract_h1_egress_stream_verdict);
+        }
 
         let matched = if parser.matched_fn.is_some() {
             Some(skel.progs.matched.attach()?)
