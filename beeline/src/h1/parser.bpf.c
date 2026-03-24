@@ -118,7 +118,7 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     return res;
 }
 
-int _parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+int _parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
     u8 *data = (u8 *)(long)skb->data;
@@ -141,7 +141,7 @@ int _parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 
 
 SEC("freplace")
 int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
- return _parse_skb(skb, pres, null_prefix);
+    return _parse_skb(skb, pres);
 }
 
 SEC("freplace")
@@ -185,8 +185,8 @@ int extract_match(const struct sk_msg_md *msg, const struct parse_res *pres __ar
     return 0;
 }
 
-int replaceable_parse_h1_egress(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
-    return _parse_skb(skb, pres, null_prefix);
+int replaceable_parse_h1_egress(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull) {
+    return _parse_skb(skb, pres);
 }
 
 int replaceable_extract_h1_match_egress(const struct __sk_buff *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
@@ -207,13 +207,13 @@ int replaceable_extract_h1_match_egress(const struct __sk_buff *msg, const struc
 }
 
 SEC("freplace")
-int replaceable_parse_h1_egress_stream_verdict(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
-    return replaceable_parse_h1_egress(skb, pres, null_prefix);
+int replaceable_parse_h1_egress_stream_verdict(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull) {
+    return replaceable_parse_h1_egress(skb, pres);
 }
 
 SEC("freplace")
-int replaceable_parse_h1_egress_stream_parser(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
-    return replaceable_parse_h1_egress(skb, pres, null_prefix);
+int replaceable_parse_h1_egress_stream_parser(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull) {
+    return replaceable_parse_h1_egress(skb, pres);
 }
 
 SEC("freplace")
