@@ -25,6 +25,8 @@ pub struct Parser {
     parse_skb_fn: Option<String>,
     extract_fn: Option<String>,
     matched_fn: Option<String>,
+    parse_h1_egress: Option<String>,
+    extract_h1_egress: Option<String>,
 }
 
 include!(concat!(env!("OUT_DIR"), "/h1/parser.skel.rs"));
@@ -60,6 +62,8 @@ impl Parser {
             parse_skb_fn: None,
             extract_fn: None,
             matched_fn: None,
+            extract_h1_egress: None,
+            parse_h1_egress: None,
         }
     }
 
@@ -103,6 +107,16 @@ impl Parser {
     /// * `extract_fn` - The name of the extract callback function in the target program
     pub fn replace_extract<S: ToString>(mut self, extract_fn: S) -> Parser {
         self.extract_fn = Some(extract_fn.to_string());
+        self
+    }
+
+    pub fn replace_h1_extract_egress<S: ToString>(mut self, extract_fn: S) -> Parser {
+        self.extract_h1_egress = Some(extract_fn.to_string());
+        self
+    }
+
+    pub fn replace_parse_h1_egress<S: ToString>(mut self, parse_fn: S) -> Parser {
+        self.parse_h1_egress = Some(parse_fn.to_string());
         self
     }
 
@@ -239,7 +253,8 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if attachment to the target program fails.
-    pub fn attach<'obj>(self, target: i32) -> Result<(Vec<Link>, Option<Link>, Option<Link>)> {
+    pub fn attach_ingress_egress<'obj>(self, target_ingress: i32,
+            target_egress: Option<(i32, i32)>) -> Result<(Vec<Link>, Option<Link>, Option<Link>)> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
         let parser = self.done_on_http_hdr_end()?;
@@ -254,18 +269,60 @@ impl Parser {
         }
 
         let progs = vec![
-            (&mut open_skel.progs.parse_msg, parser.parse_msg_fn.clone()),
-            (&mut open_skel.progs.parse_skb, parser.parse_skb_fn.clone()),
-            (&mut open_skel.progs.parse_buf, parser.parse_buf_fn.clone()),
-            (&mut open_skel.progs.matched, parser.matched_fn.clone()),
+            (&mut open_skel.progs.parse_msg, Some(target_ingress), parser.parse_msg_fn.clone()),
+            (&mut open_skel.progs.parse_skb, Some(target_ingress), parser.parse_skb_fn.clone()),
+            (&mut open_skel.progs.parse_buf, Some(target_ingress), parser.parse_buf_fn.clone()),
+            (&mut open_skel.progs.matched, Some(target_ingress), parser.matched_fn.clone()),
             (
-                &mut open_skel.progs.extract_match,
+                &mut open_skel.progs.extract_match,  Some(target_ingress),
                 parser.extract_fn.clone(),
             ),
         ];
 
-        for (prog, func) in progs {
-            autoload_and_attach(prog, target, func)?;
+        for (prog, target, func) in progs {
+            if let Some(target) = target {
+                autoload_and_attach(prog, target, func)?;
+            }
+        }
+
+        open_skel
+            .progs
+            .replaceable_extract_h1_match_egress_stream_parser
+            .set_autoload(parser.parse_h1_egress.is_some());
+        open_skel
+            .progs
+            .replaceable_parse_h1_egress_stream_parser
+            .set_autoload(parser.extract_h1_egress.is_some());
+
+        open_skel
+            .progs
+            .replaceable_extract_h1_match_egress_stream_verdict
+            .set_autoload(parser.parse_h1_egress.is_some());
+        open_skel
+            .progs
+            .replaceable_parse_h1_egress_stream_verdict
+            .set_autoload(parser.extract_h1_egress.is_some());
+
+        if let Some((stream_verdict_egress_fd, stream_parser_egress_fd)) = target_egress {
+            open_skel
+                .progs
+                .replaceable_parse_h1_egress_stream_parser
+                .set_attach_target(stream_parser_egress_fd, parser.parse_h1_egress.clone())?;
+
+            open_skel
+                .progs
+                .replaceable_extract_h1_match_egress_stream_parser
+                .set_attach_target(stream_parser_egress_fd, parser.extract_h1_egress.clone())?;
+
+            open_skel
+                .progs
+                .replaceable_parse_h1_egress_stream_verdict
+                .set_attach_target(stream_verdict_egress_fd, parser.parse_h1_egress.clone())?;
+
+            open_skel
+                .progs
+                .replaceable_extract_h1_match_egress_stream_verdict
+                .set_attach_target(stream_verdict_egress_fd, parser.extract_h1_egress.clone())?;
         }
 
         parser.inject(&mut open_skel)?;
@@ -283,6 +340,46 @@ impl Parser {
             parse.push(skel.progs.parse_buf.attach()?);
         }
 
+        // let parse_h1_egress_stream_parser = if parser.parse_h1_egress.is_some() {
+        //     Some(skel.progs.replaceable_parse_h1_egress_stream_parser.attach()?)
+        // } else {
+        //     None
+        // };
+
+        // let extract_h1_egress_stream_parser = if parser.extract_h1_egress.is_some() {
+        //     Some(skel.progs.replaceable_extract_h1_match_egress_stream_parser.attach()?)
+        // } else {
+        //     None
+        // };
+
+        // let parse_h1_egress_stream_verdict = if parser.parse_h1_egress.is_some() {
+        //     Some(skel.progs.replaceable_parse_h1_egress_stream_verdict.attach()?)
+        // } else {
+        //     None
+        // };
+
+        // let extract_h1_egress_stream_verdict = if parser.extract_h1_egress.is_some() {
+        //     Some(skel.progs.replaceable_extract_h1_match_egress_stream_verdict.attach()?)
+        // } else {
+        //     None
+        // };
+
+        // if let Some(parse_h1_egress_stream_parser) = parse_h1_egress_stream_parser {
+        //     parse.push(parse_h1_egress_stream_parser);
+        // }
+
+        // if let Some(extract_h1_egress_stream_parser) = extract_h1_egress_stream_parser {
+        //     parse.push(extract_h1_egress_stream_parser);
+        // }
+
+        // if let Some(parse_h1_egress_stream_verdict) = parse_h1_egress_stream_verdict {
+        //     parse.push(parse_h1_egress_stream_verdict);
+        // }
+
+        // if let Some(extract_h1_egress_stream_verdict) = extract_h1_egress_stream_verdict {
+        //     parse.push(extract_h1_egress_stream_verdict);
+        // }
+
         let matched = if parser.matched_fn.is_some() {
             Some(skel.progs.matched.attach()?)
         } else {
@@ -297,6 +394,13 @@ impl Parser {
         debug!("Beeline http/1 attached");
 
         anyhow::Ok((parse, matched, extract))
+    }
+
+    pub fn attach<'obj>(
+            self,
+            target: i32,
+        ) -> Result<(Vec<Link>, Option<Link>, Option<Link>)> {
+            return self.attach_ingress_egress(target, None);
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {

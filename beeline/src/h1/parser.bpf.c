@@ -118,8 +118,7 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     return res;
 }
 
-SEC("freplace")
-int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+int _parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
     u32 cidx[MAX_MATCHES] = { 0 };
     u16 s = s_init;
     u8 *data = (u8 *)(long)skb->data;
@@ -138,6 +137,11 @@ int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *
     }
 
     return res;
+}
+
+SEC("freplace")
+int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+ return _parse_skb(skb, pres, null_prefix);
 }
 
 SEC("freplace")
@@ -179,4 +183,45 @@ int extract_match(const struct sk_msg_md *msg, const struct parse_res *pres __ar
     str->len = m.len;
 
     return 0;
+}
+
+int replaceable_parse_h1_egress(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+    return _parse_skb(skb, pres, null_prefix);
+}
+
+int replaceable_extract_h1_match_egress(const struct __sk_buff *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
+    if (idx >= MAX_MATCHES) return -1;
+
+    struct hdr_match m = pres->ms[idx & MAX_MATCH_MASK];
+    if (m.len == 0) return -1;
+
+    u8 *data = (u8 *)(long)msg->data;
+    u8 *data_end = (u8 *)(long)msg->data_end;
+
+    if (data + m.idx + m.len > data_end) return -1;
+
+    str->ptr = data + m.idx;
+    str->len = m.len;
+
+    return 0;
+}
+
+SEC("freplace")
+int replaceable_parse_h1_egress_stream_verdict(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+    return replaceable_parse_h1_egress(skb, pres, null_prefix);
+}
+
+SEC("freplace")
+int replaceable_parse_h1_egress_stream_parser(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+    return replaceable_parse_h1_egress(skb, pres, null_prefix);
+}
+
+SEC("freplace")
+int replaceable_extract_h1_match_egress_stream_verdict(const struct __sk_buff *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
+    return replaceable_extract_h1_match_egress(msg, pres, idx, str);
+}
+
+SEC("freplace")
+int replaceable_extract_h1_match_egress_stream_parser(const struct __sk_buff *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
+    return replaceable_extract_h1_match_egress(msg, pres, idx, str);
 }
