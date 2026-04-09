@@ -2,7 +2,7 @@ use beeline::h1::Parser;
 use reqwest::{Client, header};
 use utils::{
     server,
-    test::{OpenObject, TestProgram},
+    test::{OpenObject, TestProgram, setup_tracing},
 };
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
@@ -20,10 +20,7 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn match_h2_preface() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
-
+    setup_tracing();
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
@@ -58,9 +55,7 @@ async fn match_h2_preface() {
 
 #[tokio::test]
 async fn parse_simple_header() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    setup_tracing();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -97,9 +92,7 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignore_header_case() {
-// _ = tracing_subscriber::fmt()
-//     .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-//     .try_init();
+//     setup_tracing();
 
 //     let server = server::launch(ECHO_ADDR).await;
 
@@ -136,9 +129,7 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignores_header_whitespace() {
-// _ = tracing_subscriber::fmt()
-//     .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-//     .try_init();
+//     setup_tracing();
 
 //     let server = server::launch(ECHO_ADDR).await;
 
@@ -175,9 +166,7 @@ async fn parse_simple_header() {
 
 #[tokio::test]
 async fn parse_subsequent_headers() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    setup_tracing();
 
     let server = server::launch(ECHO_ADDR).await;
 

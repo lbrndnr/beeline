@@ -5,7 +5,7 @@ use httlib_huffman as huffman;
 use reqwest::{Client, header};
 use utils::{
     server,
-    test::{OpenObject, TestProgram},
+    test::{OpenObject, TestProgram, setup_tracing},
 };
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
@@ -45,9 +45,7 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn parse_indexed_header_field() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    setup_tracing();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -89,9 +87,7 @@ async fn parse_indexed_header_field() {
 
 #[tokio::test]
 async fn parse_literal_header_field_no_indexing_indexed() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    setup_tracing();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -183,9 +179,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_indexed() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    setup_tracing();
 
     let server = server::launch(ECHO_ADDR).await;
 
@@ -233,9 +227,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    setup_tracing();
 
     let server = server::launch(ECHO_ADDR).await;
 

@@ -11,15 +11,16 @@ h2 = []
 [dependencies]
 anyhow = "1.0.102"
 as-bytes = "0.2.0"
+bpf-tracing = "0.0.2"
 bytes = "1.11.1"
 httlib-huffman = "0.3.4"
 libbpf-rs = "0.26.0"
 libc = "0.2.182"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [build-dependencies]
 libbpf-cargo = "0.26.0"
+bpf-tracing-include = "0.0.3"
 
 [dev-dependencies]
 reqwest = "0.13.2"

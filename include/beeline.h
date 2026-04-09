@@ -24,22 +24,6 @@ char LICENSE[] SEC("license") = "GPL";
                  : [min] "i"(UMIN), [max] "i"(UMAX))
 #endif
 
-#ifdef BL_LOG_LEVEL
-    #if BL_LOG_LEVEL == 0
-        #define bpf_log(...) (0)
-        #define bpf_err(...) (0)
-    #elif BL_LOG_LEVEL == 1
-        #define bpf_log(...) (0)
-        #define bpf_err(...) bpf_printk(__VA_ARGS__)
-    #elif BL_LOG_LEVEL == 2
-        #define bpf_log(...) bpf_printk(__VA_ARGS__)
-        #define bpf_err(...) bpf_printk(__VA_ARGS__)
-    #endif
-#else
-    #define bpf_log(...) (0)
-    #define bpf_err(...) (0)
-#endif
-
 struct ip4_addr {
     u32 ip4;
     u32 port;

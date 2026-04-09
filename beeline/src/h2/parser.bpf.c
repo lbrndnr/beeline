@@ -1,5 +1,6 @@
-#include "beeline.h"
 #include "vmlinux.h"
+#include "beeline.h"
+#include "bpf_tracing.h"
 #include <bpf/bpf_helpers.h>
 
 enum h2_parse_state {
@@ -214,7 +215,7 @@ int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u32 *n __arg_nonnul
 }
 
 static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, u32 *m, u32 *k, u8 *j) {
-    // bpf_log("parse_hpack: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
+    // bpf_debug("parse_hpack: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
 
     if (*j > 0) {
         if (H2_IS_STR(*ps)) {
@@ -231,7 +232,7 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
 
     _next_hpack(c, ps, n, k, j);
     *m = 0;
-    // bpf_log("next: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
+    // bpf_debug("next: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
 
     if (!H2_IS_STR(*ps)) {
         u8 mask = (1 << *n) - 1;
@@ -245,7 +246,7 @@ static __always_inline int _get_table_entry(const struct ip4_conn *conn __arg_no
         u32 nidx = _get_dynamic_table_index(idx, dt_size);
 
         struct dynamic_table_key key = _new_dynamic_table_key(conn, nidx);
-        bpf_log("lookup dt: %d -> %d", idx, nidx);
+        bpf_debug("lookup dt: %d -> %d", idx, nidx);
         *hf = bpf_map_lookup_elem(&dynamic_table, &key);
     }
     else {
@@ -286,9 +287,9 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
     bpf_probe_read_kernel(dt_val.val, val->len & 0x1F, val_ptr);
 
     bpf_map_update_elem(&dynamic_table, &dt_key, &dt_val, BPF_ANY);
-    bpf_log("add to dynamic table: %d", idx);
-    bpf_log("key { %d %d %d}", key->idx, key->len, key->in_msg);
-    bpf_log("val { %d %d %d}", val->idx, val->len, val->in_msg);
+    bpf_debug("add to dynamic table: %d", idx);
+    bpf_debug("key { %d %d %d}", key->idx, key->len, key->in_msg);
+    bpf_debug("val { %d %d %d}", val->idx, val->len, val->in_msg);
 
     return 0;
 }
@@ -345,7 +346,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         }
 
         _parse_hpack(c, &ps, &n, &m, &k, &j);
-        bpf_log("%d: %d %d -> %d (%d)", i, ps, n, k, j);
+        bpf_debug("%d: %d %d -> %d (%d)", i, ps, n, k, j);
 
         if (j != 0) continue;
 
@@ -381,7 +382,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         else if (ps == H2_VAL_LEN) {
             dt_info->size += add_to_dt;
             if (add_to_dt) {
-                bpf_log("%d: add to dynamic table: %d, %d", STATIC_TABLE_SIZE + dt_info->count, cid);
+                bpf_debug("%d: add to dynamic table: %d, %d", STATIC_TABLE_SIZE + dt_info->count, cid);
             }
 
             if (cid >= 0) {
@@ -427,7 +428,7 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     bool padded = flags & 0x08;
     u8 hdr_len = (padded) ? 10 : 9;
 
-    bpf_log("Parsing HTTP/2 message with length %d, type %d, flags %d", len, type, flags);
+    bpf_debug("Parsing HTTP/2 message with length %d, type %d, flags %d", len, type, flags);
 
     if (type != 0x01) {
         return len + hdr_len;
@@ -457,7 +458,7 @@ int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *
     bool padded = flags & 0x08;
     u8 hdr_len = (padded) ? 10 : 9;
 
-    bpf_log("Parsing HTTP/2 sk_buff with length %d, type %d, flags %d", len, type, flags);
+    bpf_debug("Parsing HTTP/2 sk_buff with length %d, type %d, flags %d", len, type, flags);
 
     if (type != 0x01) {
         return len + hdr_len;
@@ -485,7 +486,7 @@ int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct pa
     bool padded = flags & 0x08;
     u8 hdr_len = (padded) ? 10 : 9;
 
-    bpf_log("Parsing HTTP/2 buf with length %d, type %d, flags %d", len, type, flags);
+    bpf_debug("Parsing HTTP/2 buf with length %d, type %d, flags %d", len, type, flags);
 
     if (type != 0x01) {
         return len + hdr_len;

@@ -32,6 +32,13 @@ fn print(level: PrintLevel, msg: String) {
     }
 }
 
+pub fn setup_tracing() {
+    _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+    _ = bpf_tracing::try_init();
+}
+
 pub struct TestProgram<'obj> {
     skel: ProgSkel<'obj>,
     #[allow(dead_code)]
