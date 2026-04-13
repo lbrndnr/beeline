@@ -10,9 +10,9 @@ axum = { version = "0.8.8", features = ["http2"] }
 beeline = { path = "../beeline" }
 bytes = "1.11.1"
 libbpf-rs = "0.26.2"
-libc = "0.2.184"
+libc = "0.2.185"
 tokio = { version = "1.51", features = ["full"] }
-bpf-tracing = "0.0.2"
+bpf-tracing = "0.0.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
