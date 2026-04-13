@@ -12,7 +12,7 @@ fn build_and_generate(dir: &PathBuf) {
     let out = out_dir.clone().join("parser.skel.rs");
 
     let mut args = vec![OsString::from("-I"), OsString::from("../include")];
-    args.extend(bpf_tracing_include::clang_args_from_env(false));
+    args.extend(beeline_include::clang_args());
 
     SkeletonBuilder::new()
         .source(&src)

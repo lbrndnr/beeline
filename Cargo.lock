@@ -180,8 +180,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "as-bytes",
+ "beeline-include",
  "bpf-tracing",
- "bpf-tracing-include",
  "bytes",
  "httlib-huffman",
  "libbpf-cargo",
@@ -191,6 +191,13 @@ dependencies = [
  "tokio",
  "tracing",
  "utils",
+]
+
+[[package]]
+name = "beeline-include"
+version = "0.0.1"
+dependencies = [
+ "bpf-tracing-include",
 ]
 
 [[package]]
@@ -2027,6 +2034,7 @@ dependencies = [
  "as-bytes",
  "axum",
  "beeline",
+ "beeline-include",
  "bpf-tracing",
  "bytes",
  "libbpf-cargo",

@@ -1,4 +1,12 @@
 [workspace]
 resolver = "2"
+members = ["beeline", "beeline-include", "utils"]
 
-members = ["beeline", "utils"]
+[workspace.package]
+license = "GPL-3.0"
+authors = [
+    "lbrndnr <mail@laurinbrandner.ch>",
+]
+repository = "https://github.com/lbrndnr/beeline-rs"
+readme = "README.md"
+keywords = ["ebpf", "bpf", "libbpf", "l7"]

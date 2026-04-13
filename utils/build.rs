@@ -1,5 +1,5 @@
 use libbpf_cargo::SkeletonBuilder;
-use std::{env, ffi::OsStr, path::PathBuf};
+use std::{env, ffi::OsString, path::PathBuf};
 
 fn main() {
     let manifest_dir =
@@ -13,16 +13,12 @@ fn main() {
     let out_dir = PathBuf::from(&out_dir);
     let out = out_dir.clone().join("prog.skel.rs");
 
+    let mut args = vec![OsString::from("-I"), OsString::from("../include")];
+    args.extend(beeline_include::clang_args());
 
     SkeletonBuilder::new()
         .source(&src)
-        .clang_args([OsStr::new("-I"), OsStr::new("../include")])
+        .clang_args(args)
         .build_and_generate(&out)
         .unwrap();
-
-    let hdr = PathBuf::from(&manifest_dir)
-        .join("..")
-        .join("include")
-        .join("beeline.h");
-    println!("cargo:rerun-if-env-changed={hdr:?}");
 }

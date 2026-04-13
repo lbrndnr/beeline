@@ -20,7 +20,7 @@ tracing = "0.1.44"
 
 [build-dependencies]
 libbpf-cargo = "0.26.2"
-bpf-tracing-include = "0.0.3"
+beeline-include = { path = "../beeline-include" }
 
 [dev-dependencies]
 reqwest = "0.13.2"
