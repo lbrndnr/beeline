@@ -11,14 +11,12 @@ fn build_and_generate(dir: &PathBuf) {
     fs::create_dir_all(&out_dir).unwrap();
     let out = out_dir.clone().join("parser.skel.rs");
 
+    let mut args = vec![OsString::from("-I"), OsString::from("../include")];
+    args.extend(bpf_tracing_include::clang_args_from_env(false));
+
     SkeletonBuilder::new()
         .source(&src)
-        .clang_args(&[
-            OsString::from("-I"),
-            OsString::from("../include"),
-            OsString::from("-I"),
-            bpf_tracing_include::include_path_root(),
-        ])
+        .clang_args(args)
         .build_and_generate(&out)
         .unwrap();
 }
