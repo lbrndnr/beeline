@@ -10,4 +10,4 @@ readme.workspace = true
 keywords.workspace = true
 
 [dependencies]
-bpf-tracing-include = "0.0.3"
+bpf-tracing-include = "0.0.5"

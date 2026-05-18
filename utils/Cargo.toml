@@ -6,13 +6,13 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 as-bytes = "0.2.0"
-axum = { version = "0.8.8", features = ["http2"] }
+axum = { version = "0.8.9", features = ["http2"] }
 beeline = { path = "../beeline" }
 bytes = "1.11.1"
 libbpf-rs = "0.26.2"
-libc = "0.2.185"
-tokio = { version = "1.51", features = ["full"] }
-bpf-tracing = "0.0.3"
+libc = "0.2.186"
+tokio = { version = "1.52", features = ["full"] }
+bpf-tracing = "0.0.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
