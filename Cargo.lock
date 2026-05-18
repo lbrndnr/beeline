@@ -198,6 +198,7 @@ name = "beeline-include"
 version = "0.0.1"
 dependencies = [
  "bpf-tracing-include",
+ "tracing",
 ]
 
 [[package]]

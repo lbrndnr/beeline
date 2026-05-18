@@ -14,7 +14,7 @@ fn main() {
     let out = out_dir.clone().join("prog.skel.rs");
 
     let mut args = vec![OsString::from("-I"), OsString::from("../include")];
-    args.extend(beeline_include::clang_args());
+    args.extend_from_slice(&beeline_include::clang_args().unwrap());
 
     SkeletonBuilder::new()
         .source(&src)

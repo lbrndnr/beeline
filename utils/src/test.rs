@@ -5,7 +5,7 @@ use as_bytes::AsBytes;
 use beeline::h2::{Action, Parser};
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
-    skel::{OpenSkel, SkelBuilder},
+    skel::{OpenSkel, Skel, SkelBuilder},
 };
 use std::{
     io::{Error, ErrorKind},
@@ -30,13 +30,6 @@ fn print(level: PrintLevel, msg: String) {
         PrintLevel::Info => info!(target: "libbpf", "{}", msg),
         PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
     }
-}
-
-pub fn setup_tracing() {
-    _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
-    _ = bpf_tracing::try_init();
 }
 
 pub struct TestProgram<'obj> {
@@ -80,6 +73,11 @@ impl<'obj> TestProgram<'obj> {
 
         let skel = open_skel.load()?;
         let sock_map_fd = skel.maps.sock_map.as_fd().as_raw_fd();
+
+        _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+        bpf_tracing::try_init(skel.object())?;
 
         let cgroup_fd = std::fs::OpenOptions::new()
             .read(true)

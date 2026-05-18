@@ -5,7 +5,7 @@ use httlib_huffman as huffman;
 use reqwest::{Client, header};
 use utils::{
     server,
-    test::{OpenObject, TestProgram, setup_tracing},
+    test::{OpenObject, TestProgram},
 };
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
@@ -45,8 +45,6 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn parse_indexed_header_field() {
-    setup_tracing();
-
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
@@ -87,8 +85,6 @@ async fn parse_indexed_header_field() {
 
 #[tokio::test]
 async fn parse_literal_header_field_no_indexing_indexed() {
-    setup_tracing();
-
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
@@ -179,8 +175,6 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_indexed() {
-    setup_tracing();
-
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
@@ -227,8 +221,6 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
-    setup_tracing();
-
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();

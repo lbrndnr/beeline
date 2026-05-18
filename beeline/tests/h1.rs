@@ -2,7 +2,7 @@ use beeline::h1::Parser;
 use reqwest::{Client, header};
 use utils::{
     server,
-    test::{OpenObject, TestProgram, setup_tracing},
+    test::{OpenObject, TestProgram},
 };
 
 const ECHO_ADDR: &str = "127.0.0.1:12345";
@@ -20,7 +20,6 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn match_h2_preface() {
-    setup_tracing();
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
@@ -55,8 +54,6 @@ async fn match_h2_preface() {
 
 #[tokio::test]
 async fn parse_simple_header() {
-    setup_tracing();
-
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
@@ -92,8 +89,6 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignore_header_case() {
-//     setup_tracing();
-
 //     let server = server::launch(ECHO_ADDR).await;
 
 //     let mut open_obj = OpenObject::new();
@@ -129,8 +124,6 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignores_header_whitespace() {
-//     setup_tracing();
-
 //     let server = server::launch(ECHO_ADDR).await;
 
 //     let mut open_obj = OpenObject::new();
@@ -166,8 +159,6 @@ async fn parse_simple_header() {
 
 #[tokio::test]
 async fn parse_subsequent_headers() {
-    setup_tracing();
-
     let server = server::launch(ECHO_ADDR).await;
 
     let mut open_obj = OpenObject::new();
