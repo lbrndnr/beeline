@@ -23,6 +23,6 @@ libbpf-cargo = "0.26.2"
 beeline-include = { path = "../beeline-include" }
 
 [dev-dependencies]
-reqwest = "0.13.3"
+reqwest = "0.13.4"
 tokio = { version = "1.52", features = ["full"] }
 utils = { path = "../utils" }
