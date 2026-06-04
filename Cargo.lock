@@ -187,6 +187,7 @@ dependencies = [
  "libbpf-cargo",
  "libbpf-rs",
  "libc",
+ "regex-automata",
  "reqwest",
  "tokio",
  "tracing",
