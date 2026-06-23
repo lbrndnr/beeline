@@ -1,7 +1,10 @@
 #![allow(unused_imports)]
 use crate::{
     autoload_and_attach,
-    h1::{Action, dfa::Dfa},
+    h1::{
+        Action,
+        dfa::{Capture, Dfa, Pattern, S_ANY, S_INIT},
+    },
 };
 use anyhow::{Result, bail};
 use libbpf_rs::{
@@ -49,11 +52,11 @@ impl Parser {
     ///
     /// Additional configuration must be done through the builder methods before calling `attach`.
     pub fn new() -> Parser {
-        let states = vec![0, 1];
+        let states = vec![S_INIT, S_ANY];
 
         Parser {
-            s_init: 0,
-            s_any: 1,
+            s_init: S_INIT,
+            s_any: S_ANY,
             dfa: Dfa::new(states.into_iter()),
             parse_msg_fn: None,
             parse_buf_fn: None,
@@ -115,24 +118,25 @@ impl Parser {
     ///
     /// Returns an error if the pattern configuration fails.
     pub fn match_preface(mut self) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_init)
-            .start_capturing()
-            .push("PRI * HTTP/2.0")?
-            .push(CRLF)?
-            .push(CRLF)?
-            .end_capturing("SM")?
-            .push(CRLF)?
-            .done_on(CRLF)?;
+        self.dfa.add_pattern(Pattern {
+            start: self.s_init,
+            regex: r"(PRI \* HTTP/2\.0\r\n\r\n)SM\r\n\r\n",
+            captures: &[Capture { group: 1 }],
+            restart_to: None,
+            done: true,
+        })?;
 
         Ok(self)
     }
 
     fn done_on_http_hdr_end(mut self) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_any)
-            .push(CRLF)?
-            .done_on(CRLF)?;
+        self.dfa.add_pattern(Pattern {
+            start: self.s_any,
+            regex: r"\r\n\r\n",
+            captures: &[],
+            restart_to: None,
+            done: true,
+        })?;
 
         Ok(self)
     }
@@ -146,15 +150,14 @@ impl Parser {
     ///
     /// Returns an error if the pattern configuration fails.
     pub fn match_http_req_status_line(mut self) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_init)
-            .start_capturing()
-            .push_optional('*')?
-            .end_capturing(" ")?
-            .start_capturing()
-            .push_optional('*')?
-            .push(" HTTP/1.1")?
-            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+        let restart = self.dfa.ensure_path(self.s_any, CRLF)?;
+        self.dfa.add_pattern(Pattern {
+            start: self.s_init,
+            regex: r"([^ ]*) ([^ ]*) HTTP/1\.1\r\n",
+            captures: &[Capture { group: 1 }, Capture { group: 2 }],
+            restart_to: Some(restart),
+            done: false,
+        })?;
 
         Ok(self)
     }
@@ -168,12 +171,14 @@ impl Parser {
     ///
     /// Returns an error if the pattern configuration fails.
     pub fn match_http_status_code(mut self) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_init)
-            .push("HTTP/1.1 ")?
-            .start_capturing()
-            .push_optional('*')?
-            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+        let restart = self.dfa.ensure_path(self.s_any, CRLF)?;
+        self.dfa.add_pattern(Pattern {
+            start: self.s_init,
+            regex: r"(?is)HTTP/1\.1 (.*?)\r\n",
+            captures: &[Capture { group: 1 }],
+            restart_to: Some(restart),
+            done: false,
+        })?;
 
         Ok(self)
     }
@@ -188,18 +193,15 @@ impl Parser {
     ///
     /// Returns an error if the pattern configuration fails.
     pub fn match_http_hdr(mut self, key: &str) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_any)
-            .push(CRLF)?
-            .push(key)?
-            .push_optional('\t')?
-            .push_optional(' ')?
-            .push(":")?
-            .push_optional('\t')?
-            .push_optional(' ')?
-            .start_capturing()
-            .push_optional('*')?
-            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+        let restart = self.dfa.ensure_path(self.s_any, CRLF)?;
+        let regex = format!(r"(?is)\r\n{}[ \t]*:[ \t]*(.*?)\r\n", key);
+        self.dfa.add_pattern(Pattern {
+            start: self.s_any,
+            regex: &regex,
+            captures: &[Capture { group: 1 }],
+            restart_to: Some(restart),
+            done: false,
+        })?;
 
         Ok(self)
     }

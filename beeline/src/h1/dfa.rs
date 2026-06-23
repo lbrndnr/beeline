@@ -3,231 +3,60 @@ use anyhow::{Result, bail};
 use regex_automata::{
     Anchored, Input,
     dfa::{Automaton, dense},
-    util::syntax,
+    util::{primitives::StateID, syntax},
+};
+use regex_syntax::{
+    ParserBuilder,
+    hir::{Class, Hir, HirKind},
 };
 use std::collections::{HashMap, HashSet};
 use tracing::trace;
 
-/// Builds the literal `text` (ASCII case-insensitive) into a `regex_automata`
-/// dense DFA, then iterates that DFA's states and transitions to recover the
-/// chain of byte-classes that make up the literal.
+pub(crate) const S_INIT: u16 = 0;
+pub(crate) const S_ANY: u16 = 1;
+
+/// A capture group of a pattern that should be exported as a range. `group` is
+/// the regex capture-group index.
 ///
-/// Each element of the returned vector corresponds to one position in the
-/// literal and lists every byte that advances the DFA at that position (e.g. a
-/// letter yields both its upper- and lower-case byte).
-fn build_literal_chain(text: &str) -> Result<Vec<Vec<u8>>> {
-    let mut pattern = String::new();
-    for c in text.chars() {
-        if c.is_ascii_alphabetic() {
-            pattern.push('[');
-            pattern.push(c.to_ascii_uppercase());
-            pattern.push(c.to_ascii_lowercase());
-            pattern.push(']');
-        } else {
-            pattern.push_str(&format!("\\x{:02x}", c as u32));
-        }
-    }
-
-    let dfa = dense::DFA::builder()
-        .syntax(syntax::Config::new().unicode(false).utf8(false))
-        .build(&pattern)?;
-
-    let start = dfa.start_state_forward(&Input::new("").anchored(Anchored::Yes))?;
-
-    let mut chain = Vec::new();
-    let mut s = start;
-    loop {
-        // the end of the literal is the state whose end-of-input transition is a
-        // match; transitions out of it only exist to report longer matches and
-        // must not be followed
-        if dfa.is_match_state(dfa.next_eoi_state(s)) {
-            break;
-        }
-
-        let mut target = None;
-        let mut bytes = Vec::new();
-
-        for b in 0u16..=255 {
-            let b = b as u8;
-            let next = dfa.next_state(s, b);
-            if dfa.is_dead_state(next) {
-                continue;
-            }
-
-            match target {
-                None => {
-                    target = Some(next);
-                    bytes.push(b);
-                }
-                Some(t) if t == next => bytes.push(b),
-                Some(_) => bail!("ambiguous literal DFA for {}", text.escape_debug()),
-            }
-        }
-
-        match target {
-            None => break,
-            Some(t) => {
-                chain.push(bytes);
-                s = t;
-            }
-        }
-    }
-
-    Ok(chain)
+/// Capture groups within one pattern share a single scratch register (`cid`)
+/// and chain: a `StartCapture` fires on the first byte of the first group, and
+/// an `EndCapture(cid, rid)` fires one byte past each group's last captured
+/// byte. The eBPF `EndCapture` both records the range and resets the register
+/// to that boundary, so the next group's content is measured from there. This
+/// assumes consecutive groups are separated by exactly one delimiter byte
+/// (which holds for the HTTP grammar: `METHOD URI HTTP/1.1`).
+pub(crate) struct Capture {
+    pub group: usize,
 }
 
-pub struct DfaBuilder<'a> {
-    dfa: &'a mut Dfa,
-    start: u16,
-
-    /// The current capture id
-    cid: Option<u8>,
-
-    /// The current state id
-    sid: u16,
-
-    /// `true` if the current pattern captures a range
-    capturing: bool,
+/// A single pattern to splice into the parser DFA.
+pub(crate) struct Pattern<'a> {
+    /// State the pattern is anchored at (`S_INIT` or `S_ANY`).
+    pub start: u16,
+    /// The regex describing the pattern, including capture groups.
+    pub regex: &'a str,
+    pub captures: &'a [Capture],
+    /// Where the terminating match transitions to (e.g. the shared post-CRLF
+    /// state so subsequent headers keep matching). `None` for terminal patterns.
+    pub restart_to: Option<u16>,
+    /// Whether reaching the end of the pattern emits the `Done` action.
+    pub done: bool,
 }
 
-impl DfaBuilder<'_> {
-    pub fn push(&mut self, input: &str) -> Result<&mut Self> {
-        let entry = self.capturing && self.cid.is_none();
-        let (end, cid) = self.dfa.splice(self.sid, input, entry)?;
-        if let Some(c) = cid {
-            self.cid = Some(c);
-        }
-        self.sid = end;
-
-        Ok(self)
-    }
-
-    pub fn push_optional(&mut self, input: char) -> Result<&mut Self> {
-        trace!(target: "dfa", "push_optional: {}", input.escape_debug());
-        assert!(self.dfa.states.contains(&self.sid));
-
-        // if we start capturing, we have to advance into a new state first so the
-        // entry transition carries the StartCapture action
-        let start_capture = self.capturing && self.cid.is_none();
-        if start_capture {
-            self.push(&input.to_string())?;
-        }
-
-        // we can keep in the current state as long as we want
-        self.dfa
-            .insert_transition(self.sid, self.sid, input, Action::None)?;
-
-        Ok(self)
-    }
-
-    pub fn start_capturing(&mut self) -> &mut Self {
-        self.capturing = true;
-        self.cid = None;
-        self
-    }
-
-    pub fn end_capturing(&mut self, input: &str) -> Result<&mut Self> {
-        trace!(target: "dfa", "end_capturing: {}", input.escape_debug());
-        if !self.capturing || self.cid.is_none() {
-            bail!("No capture ID set.");
-        }
-
-        let rid = self.dfa.insert_new_range();
-        let to = self.dfa.insert_state();
-        self.end_pattern(input, Action::EndCapture(self.cid.unwrap(), rid), Some(to))?;
-        self.cid = None;
-        self.capturing = false;
-
-        Ok(self)
-    }
-
-    pub fn end_caputuring_and_restart_with(
-        &mut self,
-        input: &str,
-        restart_from: u16,
-    ) -> Result<&mut Self> {
-        trace!(target: "dfa", "end_capturing_and_restart_with: {}", input.escape_debug());
-        if !self.capturing || self.cid.is_none() {
-            bail!("No capture ID set.");
-        }
-
-        let rid = self.dfa.insert_new_range();
-        let to = match self.walk(self.start, input) {
-            Some(sid) => sid,
-            None => self.dfa.splice(restart_from, input, false)?.0,
-        };
-
-        self.end_pattern(input, Action::EndCapture(self.cid.unwrap(), rid), Some(to))?;
-        self.cid = None;
-        self.capturing = false;
-
-        Ok(self)
-    }
-
-    pub fn done_on(&mut self, input: &str) -> Result<&mut Self> {
-        if self.capturing || self.cid.is_some() {
-            bail!("Capturing range will always fail.");
-        }
-
-        self.end_pattern(input, Action::Done, None)
-    }
-
-    fn end_pattern(&mut self, input: &str, action: Action, to: Option<u16>) -> Result<&mut Self> {
-        let chars: Vec<char> = input.chars().collect();
-        assert!(!chars.is_empty());
-
-        let (last, all_but_last) = chars.split_last().unwrap();
-        let last = *last;
-
-        if !all_but_last.is_empty() {
-            let prefix: String = all_but_last.iter().collect();
-            self.sid = self.dfa.splice(self.sid, &prefix, false)?.0;
-        }
-
-        let to = to
-            .or_else(|| {
-                if let Some((state, old_action)) = self.dfa.transitions.get(&(self.sid, last)) {
-                    if *state == self.sid && (old_action.is_none() || *old_action == action) {
-                        return Some(*state);
-                    }
-                }
-
-                None
-            })
-            .unwrap_or_else(|| self.dfa.insert_state());
-
-        self.dfa.insert_transition(self.sid, to, last, action)?;
-        self.sid = to;
-
-        Ok(self)
-    }
-
-    /// Walks existing transitions for `input` starting at `from`, returning the
-    /// reached state if the whole input is already present in the graph.
-    fn walk(&self, from: u16, input: &str) -> Option<u16> {
-        let mut sid = from;
-        for c in input.chars() {
-            let next = self
-                .dfa
-                .transitions
-                .get(&(sid, c))
-                .or_else(|| self.dfa.transitions.get(&(sid, c.to_ascii_lowercase())))
-                .or_else(|| self.dfa.transitions.get(&(sid, c.to_ascii_uppercase())))?;
-            sid = next.0;
-        }
-
-        Some(sid)
-    }
-}
+/// The number of bytes that must share a target before that target is exported
+/// through the wildcard `'*'` slot rather than as explicit per-byte
+/// transitions. Capture bodies fan out to hundreds of bytes; literal states
+/// only ever have a handful, so this cleanly separates the two.
+const WILDCARD_THRESHOLD: usize = 8;
 
 pub(crate) struct Dfa {
     /// The next free state id
     sid: u16,
 
-    /// The next free capture id
+    /// The next free scratch-register id (`cid`), one per pattern
     cid: u8,
 
-    /// The next free range id
+    /// The next free result-slot id (`rid`), one per capture group
     rid: u8,
 
     states: HashSet<u16>,
@@ -254,31 +83,21 @@ impl Dfa {
         self.sid
     }
 
-    fn insert_new_capture_start(&mut self) -> u8 {
-        let cid = self.cid;
+    fn new_cid(&mut self) -> u8 {
+        let id = self.cid;
         self.cid += 1;
-        cid
+        id
     }
 
-    fn insert_new_range(&mut self) -> u8 {
-        let rid = self.rid;
+    fn new_rid(&mut self) -> u8 {
+        let id = self.rid;
         self.rid += 1;
-        rid
+        id
     }
 
     /// Inserts a single transition, reconciling it with any transition that
-    /// already exists for `(from, input)`.
-    ///
-    /// Reusing a transition is allowed as long as the target matches and the
-    /// action is compatible (the existing action is `None`, identical, or the
-    /// new action is `None`). Anything else is a construction conflict.
-    fn insert_transition(
-        &mut self,
-        from: u16,
-        to: u16,
-        input: char,
-        action: Action,
-    ) -> Result<()> {
+    /// already exists for `(from, input)` (shared prefixes across patterns).
+    fn insert_transition(&mut self, from: u16, to: u16, input: char, action: Action) -> Result<()> {
         if let Some((old_to, old_action)) = self.transitions.get(&(from, input)).copied() {
             if old_to != to {
                 bail!(
@@ -289,7 +108,6 @@ impl Dfa {
                 );
             }
 
-            // a None action never overwrites an existing one
             if action.is_none() {
                 return Ok(());
             }
@@ -310,65 +128,349 @@ impl Dfa {
         Ok(())
     }
 
-    /// Materializes the literal `text` starting at state `from` by building a
-    /// dense DFA for it and splicing its transitions into the graph, reusing
-    /// any shared prefix already present.
-    ///
-    /// When `entry` is set the first transition of the literal carries a
-    /// `StartCapture` action; the allocated (or reused) capture id is returned
-    /// alongside the end state.
-    fn splice(&mut self, from: u16, text: &str, entry: bool) -> Result<(u16, Option<u8>)> {
-        let chain = build_literal_chain(text)?;
-        let mut cur = from;
-        let mut applied_cid = None;
-
-        for (i, bytes) in chain.iter().enumerate() {
-            // reuse an existing target if any byte of this position is already wired up
-            let mut target = None;
-            for &b in bytes {
-                if let Some((to, _)) = self.transitions.get(&(cur, b as char)) {
-                    target = Some(*to);
-                    break;
+    /// Returns the state reached by following `input` from `from`, creating the
+    /// path if it does not yet exist. Used to wire restart targets onto the
+    /// shared post-CRLF state.
+    pub fn ensure_path(&mut self, from: u16, input: &str) -> Result<u16> {
+        let mut sid = from;
+        for c in input.chars() {
+            sid = match self.transitions.get(&(sid, c)) {
+                Some((to, _)) => *to,
+                None => {
+                    let next = self.insert_state();
+                    self.insert_transition(sid, next, c, Action::None)?;
+                    next
                 }
-            }
-            let target = target.unwrap_or_else(|| self.insert_state());
-
-            let action = if i == 0 && entry {
-                let existing = bytes
-                    .iter()
-                    .find_map(|&b| self.transitions.get(&(cur, b as char)).map(|(_, a)| *a));
-                let cid = match existing {
-                    Some(Action::StartCapture(c)) => c,
-                    Some(Action::None) => {
-                        bail!("Conflicting action: cannot start capturing on a shared transition")
-                    }
-                    Some(other) => bail!("Conflicting action {:?} when starting capture", other),
-                    None => self.insert_new_capture_start(),
-                };
-                applied_cid = Some(cid);
-                Action::StartCapture(cid)
-            } else {
-                Action::None
             };
-
-            for &b in bytes {
-                self.insert_transition(cur, target, b as char, action)?;
-            }
-            cur = target;
         }
 
-        Ok((cur, applied_cid))
+        Ok(sid)
     }
 
-    pub fn start_pattern<'a>(&'a mut self, from: u16) -> DfaBuilder<'a> {
-        trace!(target: "dfa", "start_pattern: {} --> ", from);
-        DfaBuilder {
-            dfa: self,
-            start: from,
-            sid: from,
-            cid: None,
-            capturing: false,
+    /// Builds a dense DFA for `pattern.regex`, locates its capture boundary
+    /// states, and splices the whole automaton into the parser graph (reusing
+    /// shared prefixes).
+    ///
+    /// To map regex capture groups onto dense DFA states we need a concrete
+    /// matching byte string and the group offsets within it. Both are derived
+    /// structurally from the regex's HIR (`synthesize`): a representative match
+    /// is generated while tracking where each capture group opens and closes.
+    pub fn add_pattern(&mut self, pattern: Pattern) -> Result<()> {
+        let dfa = dense::DFA::builder()
+            .syntax(syntax::Config::new().unicode(false).utf8(false))
+            .build(pattern.regex)?;
+        let start = dfa.start_state_forward(&Input::new("").anchored(Anchored::Yes))?;
+
+        let (path, group_spans) = Self::synthesize(pattern.regex)?;
+
+        // replay the synthesized match to get the DFA state before every byte
+        let mut walk = Vec::with_capacity(path.len() + 1);
+        let mut s = start;
+        walk.push(s);
+        for &b in &path {
+            s = dfa.next_state(s, b);
+            walk.push(s);
         }
+
+        // Locate capture boundaries and turn them into actions. A capture
+        // "region entry" action (placed when first entering a group's content)
+        // lives in `entry_actions`, keyed by the dense state it is entered from.
+        // Final/terminal actions that fire on a specific (state, byte) literal
+        // transition live in `explicit_actions`.
+        let mut entry_actions: HashMap<usize, (StateID, Action)> = HashMap::new();
+        let mut explicit_actions: HashMap<(usize, u8), Action> = HashMap::new();
+
+        if !pattern.captures.is_empty() {
+            let spans = pattern
+                .captures
+                .iter()
+                .map(|cap| {
+                    group_spans
+                        .get(&cap.group)
+                        .copied()
+                        .ok_or_else(|| anyhow::anyhow!("missing capture group {}", cap.group))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            // one scratch register for the whole pattern
+            let cid = self.new_cid();
+
+            // StartCapture fires on the first content byte of the first group
+            let entry = |actions: &mut HashMap<usize, (StateID, Action)>, idx: usize, a: Action| {
+                let d = walk[idx];
+                let tgt = dfa.next_state(d, path[idx]);
+                actions.insert(d.as_usize(), (tgt, a));
+            };
+            entry(&mut entry_actions, spans[0].0, Action::StartCapture(cid));
+
+            // EndCapture for group k fires one byte past its content. For all but
+            // the last group this coincides with the next group's first content
+            // byte, where it also serves to (re)start the register.
+            for (k, &(_, span_end)) in spans.iter().enumerate() {
+                let rid = self.new_rid();
+                let action = Action::EndCapture(cid, rid);
+                if let Some(&(next_start, _)) = spans.get(k + 1) {
+                    entry(&mut entry_actions, next_start, action);
+                } else {
+                    let end = span_end + 1;
+                    explicit_actions.insert((walk[end].as_usize(), path[end]), action);
+                }
+            }
+        }
+
+        if pattern.done {
+            let last = path.len() - 1;
+            explicit_actions.insert((walk[last].as_usize(), path[last]), Action::Done);
+        }
+
+        self.splice(&dfa, start, &pattern, &entry_actions, &explicit_actions)
+    }
+
+    /// Generates a representative byte string that matches `regex` together with
+    /// the byte span of every capture group, derived structurally from the
+    /// regex's HIR. Repetitions emit a single iteration (so capture bodies are
+    /// non-empty), character classes emit one representative byte, and
+    /// alternations take their first branch.
+    fn synthesize(regex: &str) -> Result<(Vec<u8>, HashMap<usize, (usize, usize)>)> {
+        let hir = ParserBuilder::new()
+            .unicode(false)
+            .utf8(false)
+            .build()
+            .parse(regex)?;
+
+        let mut path = Vec::new();
+        let mut spans = HashMap::new();
+        Self::emit(&hir, &mut path, &mut spans);
+
+        Ok((path, spans))
+    }
+
+    fn emit(hir: &Hir, path: &mut Vec<u8>, spans: &mut HashMap<usize, (usize, usize)>) {
+        match hir.kind() {
+            HirKind::Empty | HirKind::Look(_) => {}
+            HirKind::Literal(lit) => path.extend_from_slice(&lit.0),
+            HirKind::Class(class) => path.push(Self::rep_byte(class)),
+            HirKind::Repetition(rep) => {
+                for _ in 0..rep.min.max(1) {
+                    Self::emit(&rep.sub, path, spans);
+                }
+            }
+            HirKind::Capture(cap) => {
+                let start = path.len();
+                Self::emit(&cap.sub, path, spans);
+                spans.insert(cap.index as usize, (start, path.len()));
+            }
+            HirKind::Concat(subs) => {
+                for sub in subs {
+                    Self::emit(sub, path, spans);
+                }
+            }
+            HirKind::Alternation(subs) => {
+                if let Some(first) = subs.first() {
+                    Self::emit(first, path, spans);
+                }
+            }
+        }
+    }
+
+    /// Picks a representative byte from a character class, preferring a readable
+    /// ASCII byte over control characters.
+    fn rep_byte(class: &Class) -> u8 {
+        let ranges: Vec<(u8, u8)> = match class {
+            Class::Bytes(b) => b.ranges().iter().map(|r| (r.start(), r.end())).collect(),
+            Class::Unicode(u) => u
+                .ranges()
+                .iter()
+                .map(|r| (r.start() as u8, r.end().min('\u{ff}') as u8))
+                .collect(),
+        };
+        let contains = |c: u8| ranges.iter().any(|&(s, e)| s <= c && c <= e);
+
+        if contains(b'a') {
+            return b'a';
+        }
+        for c in 0x21u8..=0x7e {
+            if contains(c) {
+                return c;
+            }
+        }
+        ranges.first().map(|&(s, _)| s).unwrap_or(b'a')
+    }
+
+    /// BFS over the dense DFA, mapping its states onto parser states and
+    /// emitting transitions. Bytes that share a high-fanout target are folded
+    /// into the `'*'` wildcard slot the eBPF falls back to.
+    fn splice(
+        &mut self,
+        dfa: &dense::DFA<Vec<u32>>,
+        start: StateID,
+        pattern: &Pattern,
+        entry_actions: &HashMap<usize, (StateID, Action)>,
+        explicit_actions: &HashMap<(usize, u8), Action>,
+    ) -> Result<()> {
+        let mut map: HashMap<usize, u16> = HashMap::new();
+        map.insert(start.as_usize(), pattern.start);
+        let mut seen: HashSet<usize> = HashSet::from([start.as_usize()]);
+        let mut queue = vec![start];
+
+        // A capture region whose first content byte loops back to its own state
+        // (e.g. `(.*?)` or `([^ ]*)` with no preceding structure) is its own
+        // body. We cannot mark "first entry" on a self loop, so we clone such
+        // states into a distinct, non-capturing body state. The original state
+        // becomes the entry: its content bytes carry the region's entry action
+        // (`StartCapture`, or an `EndCapture` that also restarts the register)
+        // and target the body.
+        let mut body_of: HashMap<usize, (Action, u16)> = HashMap::new();
+        for (&d0, &(tgt, action)) in entry_actions.iter() {
+            if tgt.as_usize() == d0 {
+                let body = self.insert_state();
+                body_of.insert(d0, (action, body));
+            }
+        }
+
+        while let Some(d) = queue.pop() {
+            // a match state ends the pattern; its outgoing transitions only
+            // exist to report longer matches and must not be followed
+            if dfa.is_match_state(dfa.next_eoi_state(d)) {
+                continue;
+            }
+
+            let g = map[&d.as_usize()];
+
+            // self-loop capture start: emit a separate entry/body pair
+            if let Some(&(entry_action, body)) = body_of.get(&d.as_usize()) {
+                for bb in 0u16..=255 {
+                    let b = bb as u8;
+                    let n = dfa.next_state(d, b);
+                    if dfa.is_dead_state(n) || n == d {
+                        // content bytes (self loop) are folded into '*' below
+                        continue;
+                    }
+                    let action = explicit_actions
+                        .get(&(d.as_usize(), b))
+                        .copied()
+                        .unwrap_or(Action::None);
+                    let gn = self.resolve(dfa, g, b as char, n, pattern.restart_to, &mut map);
+                    self.insert_transition(g, gn, b as char, action)?;
+                    self.insert_transition(body, gn, b as char, action)?;
+                    if seen.insert(n.as_usize()) {
+                        queue.push(n);
+                    }
+                }
+                self.insert_transition(g, body, '*', entry_action)?;
+                self.insert_transition(body, body, '*', Action::None)?;
+                continue;
+            }
+
+            let dominant = Self::dominant(dfa, d);
+            let cap_start = entry_actions.get(&d.as_usize()).copied();
+
+            // the action the wildcard slot will carry, so per-byte transitions
+            // that match it can be folded away
+            let star_action = match (dominant, cap_start) {
+                (Some(dom), Some((tgt, entry_action))) if tgt == dom => entry_action,
+                _ => Action::None,
+            };
+
+            for bb in 0u16..=255 {
+                let b = bb as u8;
+                let n = dfa.next_state(d, b);
+                if dfa.is_dead_state(n) {
+                    continue;
+                }
+
+                let action = if let Some(&a) = explicit_actions.get(&(d.as_usize(), b)) {
+                    a
+                } else if let Some((tgt, entry_action)) = cap_start {
+                    if n == tgt {
+                        entry_action
+                    } else {
+                        Action::None
+                    }
+                } else {
+                    Action::None
+                };
+
+                // fold into the wildcard slot if it goes to the dominant target
+                // and carries the same action the wildcard slot will
+                if Some(n) == dominant && action == star_action {
+                    continue;
+                }
+
+                let gn = self.resolve(dfa, g, b as char, n, pattern.restart_to, &mut map);
+                self.insert_transition(g, gn, b as char, action)?;
+                if seen.insert(n.as_usize()) {
+                    queue.push(n);
+                }
+            }
+
+            if let Some(dom) = dominant {
+                let gdom = if dom == d {
+                    g
+                } else {
+                    self.resolve(dfa, g, '*', dom, pattern.restart_to, &mut map)
+                };
+                self.insert_transition(g, gdom, '*', star_action)?;
+                if seen.insert(dom.as_usize()) {
+                    queue.push(dom);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Maps a dense DFA target state onto a parser state, reusing an existing
+    /// parser transition (prefix sharing), routing terminal matches to the
+    /// restart target, or allocating a fresh state.
+    fn resolve(
+        &mut self,
+        dfa: &dense::DFA<Vec<u32>>,
+        g: u16,
+        c: char,
+        n: StateID,
+        restart_to: Option<u16>,
+        map: &mut HashMap<usize, u16>,
+    ) -> u16 {
+        if let Some(&gn) = map.get(&n.as_usize()) {
+            return gn;
+        }
+
+        if dfa.is_match_state(dfa.next_eoi_state(n)) {
+            if let Some(r) = restart_to {
+                map.insert(n.as_usize(), r);
+                return r;
+            }
+        }
+
+        if let Some(&(to, _)) = self.transitions.get(&(g, c)) {
+            map.insert(n.as_usize(), to);
+            return to;
+        }
+
+        let ns = self.insert_state();
+        map.insert(n.as_usize(), ns);
+        ns
+    }
+
+    /// Returns the highest-fanout non-dead target of `d`, if it carries at least
+    /// `WILDCARD_THRESHOLD` bytes (i.e. a capture-body-style self loop).
+    fn dominant(dfa: &dense::DFA<Vec<u32>>, d: StateID) -> Option<StateID> {
+        let mut counts: HashMap<usize, (StateID, usize)> = HashMap::new();
+        for b in 0u16..=255 {
+            let n = dfa.next_state(d, b as u8);
+            if dfa.is_dead_state(n) {
+                continue;
+            }
+            let e = counts.entry(n.as_usize()).or_insert((n, 0));
+            e.1 += 1;
+        }
+
+        counts
+            .values()
+            .filter(|(_, c)| *c >= WILDCARD_THRESHOLD)
+            .max_by_key(|(_, c)| *c)
+            .map(|(s, _)| *s)
     }
 
     pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
@@ -388,8 +490,6 @@ impl Dfa {
 mod tests {
     use super::*;
 
-    const S_ANY: u16 = 1;
-
     /// Mirrors the eBPF `_next` helper in `parser.bpf.c`.
     fn next(dfa: &Dfa, state: u16, byte: u8) -> (u16, Action) {
         if let Some(&(to, act)) = dfa.transitions.get(&(state, byte as char)) {
@@ -401,12 +501,11 @@ mod tests {
         (S_ANY, Action::None)
     }
 
-    /// Mirrors the eBPF `_parse_from` capture bookkeeping and returns the
-    /// captured ranges keyed by range id.
+    /// Mirrors the eBPF `_parse_from` capture bookkeeping.
     fn run(dfa: &Dfa, input: &[u8]) -> HashMap<u8, (usize, usize)> {
         let mut cidx: HashMap<u8, usize> = HashMap::new();
         let mut ms: HashMap<u8, (usize, usize)> = HashMap::new();
-        let mut s = 0u16;
+        let mut s = S_INIT;
 
         for (i, &c) in input.iter().enumerate() {
             let (mut ns, mut a) = next(dfa, s, c);
@@ -437,37 +536,23 @@ mod tests {
         std::str::from_utf8(&input[range.0..range.0 + range.1]).unwrap()
     }
 
-    #[test]
-    fn literal_chain_is_case_insensitive() {
-        let chain = build_literal_chain("user-agent").unwrap();
-        assert_eq!(chain.len(), 10);
-        assert_eq!(chain[0], vec![b'U', b'u']);
-        assert_eq!(chain[4], vec![b'-']);
+    fn add_header(dfa: &mut Dfa, key: &str) {
+        let restart = dfa.ensure_path(S_ANY, "\r\n").unwrap();
+        let regex = format!(r"(?is)\r\n{}[ \t]*:[ \t]*(.*?)\r\n", key);
+        dfa.add_pattern(Pattern {
+            start: S_ANY,
+            regex: &regex,
+            captures: &[Capture { group: 1 }],
+            restart_to: Some(restart),
+            done: false,
+        })
+        .unwrap();
     }
 
     #[test]
     fn captures_header_value() {
-        let mut dfa = Dfa::new(vec![0, 1].into_iter());
-        dfa.start_pattern(S_ANY)
-            .push("\r\n")
-            .unwrap()
-            .push("user-agent")
-            .unwrap()
-            .push_optional('\t')
-            .unwrap()
-            .push_optional(' ')
-            .unwrap()
-            .push(":")
-            .unwrap()
-            .push_optional('\t')
-            .unwrap()
-            .push_optional(' ')
-            .unwrap()
-            .start_capturing()
-            .push_optional('*')
-            .unwrap()
-            .end_caputuring_and_restart_with("\r\n", S_ANY)
-            .unwrap();
+        let mut dfa = Dfa::new(vec![S_INIT, S_ANY].into_iter());
+        add_header(&mut dfa, "user-agent");
 
         let input = b"\r\nUser-Agent: beeline\r\n\r\n";
         let ms = run(&dfa, input);
@@ -476,29 +561,9 @@ mod tests {
 
     #[test]
     fn captures_two_headers() {
-        let mut dfa = Dfa::new(vec![0, 1].into_iter());
-        for key in ["user-agent", "accept-language"] {
-            dfa.start_pattern(S_ANY)
-                .push("\r\n")
-                .unwrap()
-                .push(key)
-                .unwrap()
-                .push_optional('\t')
-                .unwrap()
-                .push_optional(' ')
-                .unwrap()
-                .push(":")
-                .unwrap()
-                .push_optional('\t')
-                .unwrap()
-                .push_optional(' ')
-                .unwrap()
-                .start_capturing()
-                .push_optional('*')
-                .unwrap()
-                .end_caputuring_and_restart_with("\r\n", S_ANY)
-                .unwrap();
-        }
+        let mut dfa = Dfa::new(vec![S_INIT, S_ANY].into_iter());
+        add_header(&mut dfa, "user-agent");
+        add_header(&mut dfa, "accept-language");
 
         let input = b"\r\nUser-Agent: beeline\r\nAccept-Language: sumsum\r\n\r\n";
         let ms = run(&dfa, input);
@@ -507,104 +572,57 @@ mod tests {
     }
 
     #[test]
-    fn realistic_parser_fits_state_byte() {
-        let mut dfa = Dfa::new(vec![0, 1].into_iter());
-
-        // preface
-        dfa.start_pattern(0)
-            .start_capturing()
-            .push("PRI * HTTP/2.0")
-            .unwrap()
-            .push("\r\n")
-            .unwrap()
-            .push("\r\n")
-            .unwrap()
-            .end_capturing("SM")
-            .unwrap()
-            .push("\r\n")
-            .unwrap()
-            .done_on("\r\n")
-            .unwrap();
-
-        // request status line
-        dfa.start_pattern(0)
-            .start_capturing()
-            .push_optional('*')
-            .unwrap()
-            .end_capturing(" ")
-            .unwrap()
-            .start_capturing()
-            .push_optional('*')
-            .unwrap()
-            .push(" HTTP/1.1")
-            .unwrap()
-            .end_caputuring_and_restart_with("\r\n", S_ANY)
-            .unwrap();
-
-        // status code
-        dfa.start_pattern(0)
-            .push("HTTP/1.1 ")
-            .unwrap()
-            .start_capturing()
-            .push_optional('*')
-            .unwrap()
-            .end_caputuring_and_restart_with("\r\n", S_ANY)
-            .unwrap();
-
-        for key in ["user-agent", "accept-language"] {
-            dfa.start_pattern(S_ANY)
-                .push("\r\n")
-                .unwrap()
-                .push(key)
-                .unwrap()
-                .push_optional('\t')
-                .unwrap()
-                .push_optional(' ')
-                .unwrap()
-                .push(":")
-                .unwrap()
-                .push_optional('\t')
-                .unwrap()
-                .push_optional(' ')
-                .unwrap()
-                .start_capturing()
-                .push_optional('*')
-                .unwrap()
-                .end_caputuring_and_restart_with("\r\n", S_ANY)
-                .unwrap();
-        }
-
-        // header end
-        dfa.start_pattern(S_ANY)
-            .push("\r\n")
-            .unwrap()
-            .done_on("\r\n")
-            .unwrap();
-
-        let max = dfa.iter_states().max().copied().unwrap();
-        assert!(max < 256, "state id {} exceeds eBPF byte mask", max);
-    }
-
-    #[test]
     fn header_lookup_is_case_insensitive_on_key() {
-        let mut dfa = Dfa::new(vec![0, 1].into_iter());
-        dfa.start_pattern(S_ANY)
-            .push("\r\n")
-            .unwrap()
-            .push("user-agent")
-            .unwrap()
-            .push(":")
-            .unwrap()
-            .push_optional(' ')
-            .unwrap()
-            .start_capturing()
-            .push_optional('*')
-            .unwrap()
-            .end_caputuring_and_restart_with("\r\n", S_ANY)
-            .unwrap();
+        let mut dfa = Dfa::new(vec![S_INIT, S_ANY].into_iter());
+        add_header(&mut dfa, "user-agent");
 
         let input = b"\r\nUSER-AGENT: beeline\r\n\r\n";
         let ms = run(&dfa, input);
         assert_eq!(captured(input, ms[&0]), "beeline");
+    }
+
+    #[test]
+    fn captures_request_line_method_and_uri() {
+        let mut dfa = Dfa::new(vec![S_INIT, S_ANY].into_iter());
+        let restart = dfa.ensure_path(S_ANY, "\r\n").unwrap();
+        dfa.add_pattern(Pattern {
+            start: S_INIT,
+            regex: r"([^ ]*) ([^ ]*) HTTP/1\.1\r\n",
+            captures: &[
+                Capture { group: 1 },
+                Capture { group: 2 },
+            ],
+            restart_to: Some(restart),
+            done: false,
+        })
+        .unwrap();
+
+        let input = b"POST /index.html HTTP/1.1\r\n\r\n";
+        let ms = run(&dfa, input);
+        assert_eq!(captured(input, ms[&0]), "POST");
+        assert_eq!(captured(input, ms[&1]), "/index.html");
+    }
+
+    #[test]
+    fn status_code_capture_fits_state_byte() {
+        let mut dfa = Dfa::new(vec![S_INIT, S_ANY].into_iter());
+        let restart = dfa.ensure_path(S_ANY, "\r\n").unwrap();
+        dfa.add_pattern(Pattern {
+            start: S_INIT,
+            regex: r"(?is)HTTP/1\.1 (.*?)\r\n",
+            captures: &[Capture { group: 1 }],
+            restart_to: Some(restart),
+            done: false,
+        })
+        .unwrap();
+        add_header(&mut dfa, "user-agent");
+
+        let input = b"HTTP/1.1 200 OK\r\nUser-Agent: beeline\r\n\r\n";
+        let ms = run(&dfa, input);
+        assert_eq!(captured(input, ms[&0]), "200 OK");
+        assert_eq!(captured(input, ms[&1]), "beeline");
+
+        let max = dfa.iter_states().max().copied().unwrap();
+        assert!(max < 256, "state id {} exceeds eBPF byte mask", max);
     }
 }

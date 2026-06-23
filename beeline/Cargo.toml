@@ -12,6 +12,7 @@ h2 = []
 anyhow = "1.0.102"
 as-bytes = "0.2.0"
 regex-automata = "0.4.14"
+regex-syntax = "0.8.8"
 bpf-tracing = "0.0.5"
 bytes = "1.11.1"
 httlib-huffman = "0.3.4"
