@@ -381,9 +381,6 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         }
         else if (ps == H2_VAL_LEN) {
             dt_info->size += add_to_dt;
-            if (add_to_dt) {
-                bpf_debug("%d: add to dynamic table: %d, %d", STATIC_TABLE_SIZE + dt_info->count, cid);
-            }
 
             if (cid >= 0) {
                 struct hdr_match val = (struct hdr_match) {
