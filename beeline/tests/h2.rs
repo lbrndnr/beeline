@@ -8,8 +8,6 @@ use utils::{
     test::{OpenObject, TestProgram},
 };
 
-const ECHO_ADDR: &str = "127.0.0.1:12345";
-
 fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
     let actual_hf = prog.get_match(idx).expect("get_match");
 
@@ -45,10 +43,10 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn parse_indexed_header_field() {
-    let server = server::launch(ECHO_ADDR).await;
+    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
     let h1 = h1::Parser::new()
         .match_preface()
@@ -69,7 +67,7 @@ async fn parse_indexed_header_field() {
 
     let client = build_client();
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .send()
         .await
         .expect("request");
@@ -77,7 +75,6 @@ async fn parse_indexed_header_field() {
     assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some("GET"));
 
-    drop(server);
     drop(prog);
     drop(h2);
     drop(h1);
@@ -85,10 +82,10 @@ async fn parse_indexed_header_field() {
 
 #[tokio::test]
 async fn parse_literal_header_field_no_indexing_indexed() {
-    let server = server::launch(ECHO_ADDR).await;
+    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = h1::Parser::new()
         .match_preface()
@@ -109,7 +106,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
     let client = build_client();
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .basic_auth("beeline", Some("beeline"))
         .send()
         .await
@@ -118,7 +115,6 @@ async fn parse_literal_header_field_no_indexing_indexed() {
     assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some("Basic YmVlbGluZTpiZWVsaW5l")); // beeline:beeline in base64
 
-    drop(server);
     drop(prog);
     drop(h2);
     drop(h1);
@@ -133,7 +129,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 //     let server = server::launch(ECHO_ADDR).await;
 
 //     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
 //     let h1 = h1::Parser::new()
 //         .match_preface()
@@ -158,7 +154,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
 //     let client = build_client();
 //     let resp = client
-//         .get(format!("http://{}", ECHO_ADDR))
+//         .get(format!("http://{}", addr))
 //         .header("sensitive", val)
 //         .send()
 //         .await
@@ -167,18 +163,17 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 //     assert_eq!(resp.status(), 200);
 //     assert_match_eq(&prog, 0, Some(secret));
 
-//     drop(server);
-//     drop(prog);
+// //     drop(prog);
 //     drop(h2);
 //     drop(h1);
 // }
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_indexed() {
-    let server = server::launch(ECHO_ADDR).await;
+    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = h1::Parser::new()
         .match_preface()
@@ -203,7 +198,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
     let user_agent = "beeline";
     let path = "/bee/1234";
     let resp = client
-        .get(format!("http://{}{}", ECHO_ADDR, path))
+        .get(format!("http://{}{}", addr, path))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await
@@ -213,7 +208,6 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
     assert_match_eq(&prog, 0, Some(user_agent));
     assert_match_eq(&prog, 1, Some(path));
 
-    drop(server);
     drop(prog);
     drop(h2);
     drop(h1);
@@ -221,10 +215,10 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
-    let server = server::launch(ECHO_ADDR).await;
+    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = h1::Parser::new()
         .match_preface()
@@ -249,7 +243,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     let user_agent = "beeline";
     let lang = "sumsum";
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .header(header::USER_AGENT, user_agent)
         .header(header::ACCEPT_LANGUAGE, lang)
         .send()
@@ -263,7 +257,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     // repeat the request with other headers
     // this will check if it indexes the dynamic table correctly
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .header(header::VIA, "the hive")
         .send()
         .await
@@ -275,7 +269,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 
     // we repeat this request to check if the header has been added to the dynamic table
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .header(header::ACCEPT_LANGUAGE, lang)
         .header(header::USER_AGENT, user_agent)
         .send()
@@ -286,7 +280,6 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
     assert_match_eq(&prog, 0, Some(user_agent));
     assert_match_eq(&prog, 1, Some(lang));
 
-    drop(server);
     drop(prog);
     drop(h2);
     drop(h1);
@@ -301,7 +294,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 //     let server = server::launch(ECHO_ADDR).await;
 
 //     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach program");
+//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
 //     let h1 = h1::Parser::new()
 //         .match_preface()
@@ -326,7 +319,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 //     let user_agent = "beeline";
 //     let lang = "sumsum";
 //     let resp = client
-//         .get(format!("http://{}", ECHO_ADDR))
+//         .get(format!("http://{}", addr))
 //         .header(header::USER_AGENT, user_agent)
 //         .header(header::ACCEPT_LANGUAGE, lang)
 //         .send()
@@ -337,8 +330,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 //     assert_match_eq(&prog, 0, Some(user_agent));
 //     assert_match_eq(&prog, 1, Some(lang));
 
-//     drop(server);
-//     drop(prog);
+// //     drop(prog);
 //     drop(h2);
 //     drop(h1);
 // }
