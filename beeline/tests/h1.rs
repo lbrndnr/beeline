@@ -18,7 +18,7 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn match_h2_preface() {
-    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
+    let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
@@ -51,7 +51,7 @@ async fn match_h2_preface() {
 
 #[tokio::test]
 async fn parse_simple_header() {
-    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
+    let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
@@ -85,7 +85,7 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignore_header_case() {
-//     let server = server::launch(ECHO_ADDR).await;
+//     let server = server::launch().await;
 
 //     let mut open_obj = OpenObject::new();
 //     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
@@ -119,7 +119,7 @@ async fn parse_simple_header() {
 
 // #[tokio::test]
 // async fn ignores_header_whitespace() {
-//     let server = server::launch(ECHO_ADDR).await;
+//     let server = server::launch().await;
 
 //     let mut open_obj = OpenObject::new();
 //     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
@@ -153,7 +153,7 @@ async fn parse_simple_header() {
 
 #[tokio::test]
 async fn parse_subsequent_headers() {
-    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
+    let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");

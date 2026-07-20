@@ -22,16 +22,14 @@ async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, Stat
     }
 }
 
-/// Launches the echo server on the given address and returns the address it is
-/// actually bound to. Pass an address with port `0` (e.g. `127.0.0.1:0`) to let
-/// the OS assign a free ephemeral port, which avoids collisions between tests
-/// running in parallel.
-pub async fn launch<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<SocketAddr> {
+/// Launches an echo server on localhost and returns the address it is bound to.
+pub async fn launch() -> Result<SocketAddr> {
     let echo = get(move |hdrs: HeaderMap, body: Bytes| echo(hdrs, body));
     let app = Router::new()
         .route("/", echo.clone())
         .route("/{*path}", echo.clone());
 
+    let addr: SocketAddr = "127.0.0.1:0".parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local_addr = listener.local_addr()?;
     tokio::spawn(async move {

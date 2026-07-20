@@ -43,7 +43,7 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn parse_indexed_header_field() {
-    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
+    let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
@@ -82,7 +82,7 @@ async fn parse_indexed_header_field() {
 
 #[tokio::test]
 async fn parse_literal_header_field_no_indexing_indexed() {
-    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
+    let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
@@ -126,7 +126,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
 //         .try_init();
 
-//     let server = server::launch(ECHO_ADDR).await;
+//     let server = server::launch().await;
 
 //     let mut open_obj = OpenObject::new();
 //     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
@@ -170,7 +170,7 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_indexed() {
-    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
+    let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
@@ -215,7 +215,7 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
 
 #[tokio::test]
 async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
-    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
+    let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
@@ -291,7 +291,7 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
 // .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
 // .try_init().expect("init tracing");
 
-//     let server = server::launch(ECHO_ADDR).await;
+//     let server = server::launch().await;
 
 //     let mut open_obj = OpenObject::new();
 //     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
