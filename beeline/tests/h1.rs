@@ -5,8 +5,6 @@ use utils::{
     test::{OpenObject, TestProgram},
 };
 
-const ECHO_ADDR: &str = "127.0.0.1:12345";
-
 fn assert_match_eq(prog: &TestProgram, idx: usize, expected: &str) {
     let actual = prog.get_match(idx).unwrap().unwrap();
     let actual = String::from_utf8(actual).unwrap();
@@ -20,10 +18,10 @@ fn build_client() -> Client {
 
 #[tokio::test]
 async fn match_h2_preface() {
-    let server = server::launch(ECHO_ADDR).await;
+    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
     let h1 = Parser::new()
         .match_preface()
@@ -39,7 +37,7 @@ async fn match_h2_preface() {
         .build()
         .expect("client");
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .send()
         .await
         .expect("request");
@@ -47,17 +45,16 @@ async fn match_h2_preface() {
     assert_eq!(resp.status(), 200);
     assert_eq!(prog.num_upgraded_conns().unwrap(), 1);
 
-    drop(server);
     drop(prog);
     drop(h1);
 }
 
 #[tokio::test]
 async fn parse_simple_header() {
-    let server = server::launch(ECHO_ADDR).await;
+    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
     let h1 = Parser::new()
         .match_preface()
@@ -73,7 +70,7 @@ async fn parse_simple_header() {
     let client = build_client();
     let user_agent = "beeline";
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .header(header::USER_AGENT, user_agent)
         .send()
         .await
@@ -82,7 +79,6 @@ async fn parse_simple_header() {
     assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 1, user_agent);
 
-    drop(server);
     drop(prog);
     drop(h1);
 }
@@ -92,7 +88,7 @@ async fn parse_simple_header() {
 //     let server = server::launch(ECHO_ADDR).await;
 
 //     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
 //     let h1 = Parser::new()
 //         .match_preface()
@@ -108,7 +104,7 @@ async fn parse_simple_header() {
 //     let client = build_client();
 //     let user_agent = "beeline";
 //     let resp = client
-//         .get(format!("http://{}", ECHO_ADDR))
+//         .get(format!("http://{}", addr))
 //         .header("UsEr-aGEnT", user_agent) // TODO: this doesn't seem to be working
 //         .send()
 //         .await
@@ -117,8 +113,7 @@ async fn parse_simple_header() {
 //     assert_eq!(resp.status(), 200);
 //     assert_match_eq(&prog, 1, user_agent);
 
-//     drop(server);
-//     drop(prog);
+// //     drop(prog);
 //     drop(h1);
 // }
 
@@ -127,7 +122,7 @@ async fn parse_simple_header() {
 //     let server = server::launch(ECHO_ADDR).await;
 
 //     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
 //     let h1 = Parser::new()
 //         .match_preface()
@@ -143,7 +138,7 @@ async fn parse_simple_header() {
 //     let client = build_client();
 //     let user_agent = "beeline";
 //     let resp = client
-//         .get(format!("http://{}", ECHO_ADDR))
+//         .get(format!("http://{}", addr))
 //         .header("user-agent   ", format!("  {}", user_agent))
 //         .send()
 //         .await
@@ -152,17 +147,16 @@ async fn parse_simple_header() {
 //     assert_eq!(resp.status(), 200);
 //     assert_match_eq(&prog, 1, user_agent);
 
-//     drop(server);
-//     drop(prog);
+// //     drop(prog);
 //     drop(h1);
 // }
 
 #[tokio::test]
 async fn parse_subsequent_headers() {
-    let server = server::launch(ECHO_ADDR).await;
+    let addr = server::launch("127.0.0.1:0").await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(ECHO_ADDR, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
     let h1 = Parser::new()
         .match_preface()
@@ -181,7 +175,7 @@ async fn parse_subsequent_headers() {
     let user_agent = "beeline";
     let lang = "sumsum";
     let resp = client
-        .get(format!("http://{}", ECHO_ADDR))
+        .get(format!("http://{}", addr))
         .header(header::USER_AGENT, user_agent)
         .header(header::ACCEPT_LANGUAGE, lang)
         .send()
@@ -192,7 +186,6 @@ async fn parse_subsequent_headers() {
     assert_match_eq(&prog, 1, user_agent);
     assert_match_eq(&prog, 2, lang);
 
-    drop(server);
     drop(prog);
     drop(h1);
 }

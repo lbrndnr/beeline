@@ -12,7 +12,7 @@ on:
 jobs:
     test:
         name: Test [${{ matrix.rust }}, ${{ matrix.profile }}]
-        runs-on: ubuntu-24.04
+        runs-on: ubuntu-26.04
         strategy:
             fail-fast: false
             matrix:
@@ -53,7 +53,7 @@ jobs:
             - name: Install deps
               run: |
                   sudo apt-get update
-                  sudo apt-get install --yes --no-install-recommends clang-18 libelf-dev zlib1g-dev linux-headers-$(uname -r)
+                  sudo apt-get install --yes --no-install-recommends clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-$(uname -r)
                   sudo ln -s /usr/include/asm-generic /usr/include/asm
                   sudo rm -f /bin/clang && sudo ln -s /usr/bin/clang-18 /bin/clang && sudo ln -s /usr/bin/llvm-strip-18 /bin/llvm-strip
                   git clone --recurse-submodules https://github.com/libbpf/bpftool.git
@@ -67,6 +67,6 @@ jobs:
               run: cargo build --profile=${{ matrix.profile }} --locked --verbose --workspace
             - name: Run tests
               # Skip tests which require sudo
-              run: cargo test --profile=${{ matrix.profile }} --locked --verbose --workspace --test h1 -- --skip ':root:'  --include-ignored
+              run: cargo test --profile=${{ matrix.profile }} --locked --verbose --workspace -- --skip ':root:' --include-ignored
             - name: Run root tests
-              run: cd beeline && cargo test --profile=${{ matrix.profile }} --locked --verbose --test h1 -- ':root:'
+              run: cd beeline && cargo test --profile=${{ matrix.profile }} --locked --verbose -- ':root:'
