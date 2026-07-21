@@ -197,7 +197,7 @@ dependencies = [
 name = "beeline-include"
 version = "0.0.1"
 dependencies = [
- "bpf-tracing-include",
+ "bpf-tracing-include 0.0.6",
  "tracing",
 ]
 
@@ -213,7 +213,7 @@ version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03afc6160907ec9ab6c9b81d830c65351789472986f17d8c9279fca8929c851d"
 dependencies = [
- "bpf-tracing-include",
+ "bpf-tracing-include 0.0.5",
  "libbpf-rs",
  "tracing",
 ]
@@ -225,6 +225,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d87c0f987c14b007d890dfe989b2428a6749973f17e584e012aeeedfeeb627d"
 dependencies = [
  "tracing",
+]
+
+[[package]]
+name = "bpf-tracing-include"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e09494137e17c032df01b4e6c15e71a830b5cd8ac13b43c0cfdfa39da321c471"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

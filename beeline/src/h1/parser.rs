@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Result, bail};
 use libbpf_rs::{
     Link, MapCore, OpenObject, PrintLevel, set_print,
-    skel::{OpenSkel, SkelBuilder},
+    skel::{OpenSkel, Skel, SkelBuilder},
 };
 use std::{collections::HashMap, mem::MaybeUninit};
 use tracing::{Level, debug, warn};
@@ -271,6 +271,7 @@ impl Parser {
         parser.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
+        bpf_tracing::try_init(skel.object())?;
 
         let mut parse = Vec::new();
         if parser.parse_msg_fn.is_some() {

@@ -18,4 +18,4 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [build-dependencies]
 libbpf-cargo = "0.26.2"
-beeline-include = {path = "../beeline-include"}
+beeline-include = { path = "../beeline-include" }

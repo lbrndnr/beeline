@@ -4,7 +4,8 @@ use tracing::level_filters::ParseLevelFilterError;
 // TODO: add option for env var that should toggle tracing
 pub fn clang_args() -> Result<Vec<OsString>, ParseLevelFilterError> {
     let mut args = vec![OsString::from("-I"), OsString::from(include_path_root())];
-    args.extend_from_slice(&bpf_tracing_include::clang_args_from_default_env()?);
+    args.extend_from_slice(&bpf_tracing_include::clang_args_from_default_env());
+    println!("bpf-tracing-include args: {:?}", args);
     Ok(args)
 }
 

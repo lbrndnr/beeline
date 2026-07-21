@@ -8,7 +8,7 @@ use as_bytes::AsBytes;
 use httlib_huffman as huffman;
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
-    skel::{OpenSkel, SkelBuilder},
+    skel::{OpenSkel, Skel, SkelBuilder},
 };
 use std::mem::MaybeUninit;
 use tracing::{Level, debug, warn};
@@ -227,6 +227,7 @@ impl Parser {
         self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
+        bpf_tracing::try_init(skel.object())?;
 
         let mut parse = Vec::new();
         if self.parse_msg_fn.is_some() {

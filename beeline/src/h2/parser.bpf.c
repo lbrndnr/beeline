@@ -14,7 +14,8 @@ enum h2_parse_state {
     H2_VAL = 4,
 };
 
-#define H2_IS_STR(ps) (ps > H2_VAL_LEN)
+#define PS_IS_STR(ps) (ps > H2_VAL_LEN)
+#define PS_LEN_TO_STR(ps) (ps + 2)
 
 struct header_field {
     u8 key[32];
@@ -58,16 +59,7 @@ struct {
 const u16 a_done = 1 << 14;
 const u16 a_start_capture = 1 << 13;
 const u16 a_end_capture = 1 << 12;
-
-const u16 a_h2_read_st = 1 << 11;
-const u16 a_h2_read_dt = 1 << 10;
-
-// if a_done -> then this is 0
-// if a_start_capture -> then this is the cid
-// if a_end_capture -> then this is cid | mid
 const u16 a_id_mask = 0x0FFF;
-const u16 a_id_1_mask = 0x0FC0;
-const u16 a_id_2_mask = 0x003F;
 
 const u16 s_any = 0;
 
@@ -116,6 +108,52 @@ static __always_inline struct msg_ctx _new_skb_ctx(const struct __sk_buff *skb) 
         }
     };
 }
+
+#define HPACK_HUFF_EOS    256
+#define HPACK_HUFF_MAXLEN 30
+
+/* Number of symbols whose canonical code has length L, for L = 0..30.
+ * Derived from the code lengths in RFC 7541 Appendix B. */
+static const u8 huff_count[HPACK_HUFF_MAXLEN + 1] = {
+    0, 0, 0, 0, 0, 10, 26, 32, 6, 0, 5, 3, 2, 6, 2, 3,
+    0, 0, 0, 3, 8, 13, 26, 29, 12, 4, 15, 19, 29, 0, 4
+};
+
+/* First canonical code value at each length L. */
+static const u32 huff_first_code[HPACK_HUFF_MAXLEN + 1] = {
+    0, 0, 0, 0, 0, 0, 20, 92, 248, 508, 1016, 2042, 4090, 8184, 16380, 32764,
+    65534, 131068, 262136, 524272, 1048550, 2097116, 4194258, 8388568, 16777194,
+    33554412, 67108832, 134217694, 268435426, 536870910, 1073741820
+};
+
+/* Index into huff_symbols[] of the first symbol having length L. */
+static const u16 huff_first_symbol[HPACK_HUFF_MAXLEN + 1] = {
+    0, 0, 0, 0, 0, 0, 10, 36, 68, 74, 74, 79, 82, 84, 90, 92,
+    95, 95, 95, 95, 98, 106, 119, 145, 174, 186, 190, 205, 224, 253, 253
+};
+
+/* Symbol values (0-255 = byte, 256 = EOS), grouped by ascending code
+ * length and, within a length, by ascending symbol value -- this is the
+ * order canonical Huffman assigns codes in, and matches the order the
+ * symbols appear in RFC 7541 Appendix B. */
+static const u16 huff_symbols[256] = {
+     48,  49,  50,  97,  99, 101, 105, 111, 115, 116,  32,  37,  45,  46,  47,  51,
+     52,  53,  54,  55,  56,  57,  61,  65,  95,  98, 100, 102, 103, 104, 108, 109,
+    110, 112, 114, 117,  58,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,
+     77,  78,  79,  80,  81,  82,  83,  84,  85,  86,  87,  89, 106, 107, 113, 118,
+    119, 120, 121, 122,  38,  42,  44,  59,  88,  90,  33,  34,  40,  41,  63,  39,
+     43, 124,  35,  62,   0,  36,  64,  91,  93, 126,  94, 125,  60,  96, 123,  92,
+    195, 208, 128, 130, 131, 162, 184, 194, 224, 226, 153, 161, 167, 172, 176, 177,
+    179, 209, 216, 217, 227, 229, 230, 129, 132, 133, 134, 136, 146, 154, 156, 160,
+    163, 164, 169, 170, 173, 178, 181, 185, 186, 187, 189, 190, 196, 198, 228, 232,
+    233,   1, 135, 137, 138, 139, 140, 141, 143, 147, 149, 150, 151, 152, 155, 157,
+    158, 165, 166, 168, 174, 175, 180, 182, 183, 188, 191, 197, 231, 239,   9, 142,
+    144, 145, 148, 159, 171, 206, 215, 225, 236, 237, 199, 207, 234, 235, 192, 193,
+    200, 201, 202, 205, 210, 213, 218, 219, 238, 240, 242, 243, 255, 203, 204, 211,
+    212, 214, 221, 222, 223, 241, 244, 245, 246, 247, 248, 250, 251, 252, 253, 254,
+      2,   3,   4,   5,   6,   7,   8,  11,  12,  14,  15,  16,  17,  18,  19,  20,
+     21,  23,  24,  25,  26,  27,  28,  29,  30,  31, 127, 220, 249,  10,  13,  22
+};
 
 static __always_inline struct dynamic_table_key _new_dynamic_table_key(const struct ip4_conn *conn, u32 idx) {
     return (struct dynamic_table_key) {
@@ -172,35 +210,25 @@ static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *act
     *action = t.action;
 }
 
-int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u32 *n __arg_nonnull, u32 *k __arg_nonnull, u8 *j __arg_nonnull) {
-    if (*ps == H2_KEY_LEN) {
-        *ps = H2_KEY;
+static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u32 *n __arg_nonnull, u32 *k __arg_nonnull, u8 *j __arg_nonnull) {
+    if (*ps == H2_KEY_LEN || *ps == H2_VAL_LEN) {
+        *ps = PS_LEN_TO_STR(*ps);
         *j = *k-1;
-        *k = 0;
-        *n = 0;
-    }
-    else if (*ps == H2_VAL_LEN) {
-        *ps = H2_VAL;
-        *j = *k-1;
-        *k = 0;
         *n = 0;
     }
     else if (*ps == H2_IDX && ((*n == 6 && *k == 64) || (*n == 4 && *k == 0))) {
         *ps = H2_KEY_LEN;
         *j = 0;
-        *k = 0;
         *n = 7;
     }
     else if ((*ps == H2_IDX && (*n == 6 || *n == 4)) || *ps == H2_KEY) {
         *ps = H2_VAL_LEN;
         *j = 0;
-        *k = 0;
         *n = 7;
     }
     else {
         *ps = H2_IDX;
         *j = 0;
-        *k = 0;
         *n = 4;
 
         if ((c & 128) == 128) {
@@ -211,6 +239,8 @@ int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u32 *n __arg_nonnul
         }
     }
 
+    *k = 0;
+
     return 0;
 }
 
@@ -218,7 +248,7 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     // bpf_debug("parse_hpack: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
 
     if (*j > 0) {
-        if (H2_IS_STR(*ps)) {
+        if (PS_IS_STR(*ps)) {
             *j -= 1;
         }
         else {
@@ -234,7 +264,7 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     *m = 0;
     // bpf_debug("next: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
 
-    if (!H2_IS_STR(*ps)) {
+    if (!PS_IS_STR(*ps)) {
         u8 mask = (1 << *n) - 1;
         *k = c & mask;
         *j = (*k == mask);
@@ -256,13 +286,11 @@ static __always_inline int _get_table_entry(const struct ip4_conn *conn __arg_no
     return (hf == NULL) ? -1 : idx;
 }
 
-__noinline __weak s8 _parse_table_entry(const struct header_field *hf __arg_nonnull, u16 *s __arg_nonnull) {
+static __always_inline s8 _match_header_key(const u8 *key __arg_nonnull, u16 key__sz, u16 *s __arg_nonnull) {
     u8 j = 0;
     u16 a = 0;
-    bpf_for(j, 0, 32) {
-        u8 c = hf->key[j & 0x1F];
-        if (c == 0) return -1;
-
+    bpf_for(j, 0, key__sz) {
+        u8 c = key[j];
         _next(*s, c, s, &a);
 
         if ((a & a_start_capture) != 0) {
@@ -336,6 +364,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
     };
 
     bpf_for(i, start, len+1) {
+
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
 
@@ -348,7 +377,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         _parse_hpack(c, &ps, &n, &m, &k, &j);
         bpf_debug("%d: %d %d -> %d (%d)", i, ps, n, k, j);
 
-        if (j != 0) continue;
+        if (j != 0 && !PS_IS_STR(ps)) continue;
 
         if (ps == H2_IDX) {
             add_to_dt = (u8)(n == 6);
@@ -360,7 +389,7 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
                 continue;
             }
 
-            cid = _parse_table_entry(hf, s);
+            cid = _match_header_key(hf->key, 32, s);
             if (cid >= 0) {
                 // check if we are replacing the exisiting entry, or taking
                 // the one in the table
@@ -378,6 +407,14 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         else if (ps == H2_KEY_LEN) {
             key.len = k;
             key.in_msg = true;
+        }
+        else if (ps == H2_KEY) {
+            u16 a = 0;
+            _next(*s, c, s, &a);
+
+            if ((a & a_start_capture) != 0) {
+                cid = a & a_id_mask & MAX_MATCH_MASK;
+            }
         }
         else if (ps == H2_VAL_LEN) {
             dt_info->size += add_to_dt;
