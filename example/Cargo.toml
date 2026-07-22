@@ -1,0 +1,23 @@
+[package]
+name = "example"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+
+[dependencies]
+axum = { version = "0.8.9", features = ["http2"] }
+beeline = { path = "../beeline", features = ["h1", "h2"] }
+tokio = { version = "1.52", features = ["full"] }
+bpf-tracing = "0.0.5"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "set-status"] }
+
+[build-dependencies]
+libbpf-cargo = "0.26.2"
+beeline-include = { path = "../beeline-include" }
