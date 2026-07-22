@@ -19,8 +19,6 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // `ServeDir` serves the files in the "assets" directory, falling back to
-    // `index.html` (with a 404 status) for any path that doesn't match a file.
     let index_html = SetStatus::new(ServeFile::new("assets/index.html"), StatusCode::NOT_FOUND);
     let serve_dir = ServeDir::new("assets").not_found_service(index_html);
 
