@@ -24,6 +24,8 @@ struct header_field {
 
 #define STATIC_TABLE_SIZE 61
 
+#define SETTINGS_HEADER_TABLE_SIZE 0x1
+
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, STATIC_TABLE_SIZE+1);
@@ -109,52 +111,6 @@ static __always_inline struct msg_ctx _new_skb_ctx(const struct __sk_buff *skb) 
     };
 }
 
-#define HPACK_HUFF_EOS    256
-#define HPACK_HUFF_MAXLEN 30
-
-/* Number of symbols whose canonical code has length L, for L = 0..30.
- * Derived from the code lengths in RFC 7541 Appendix B. */
-static const u8 huff_count[HPACK_HUFF_MAXLEN + 1] = {
-    0, 0, 0, 0, 0, 10, 26, 32, 6, 0, 5, 3, 2, 6, 2, 3,
-    0, 0, 0, 3, 8, 13, 26, 29, 12, 4, 15, 19, 29, 0, 4
-};
-
-/* First canonical code value at each length L. */
-static const u32 huff_first_code[HPACK_HUFF_MAXLEN + 1] = {
-    0, 0, 0, 0, 0, 0, 20, 92, 248, 508, 1016, 2042, 4090, 8184, 16380, 32764,
-    65534, 131068, 262136, 524272, 1048550, 2097116, 4194258, 8388568, 16777194,
-    33554412, 67108832, 134217694, 268435426, 536870910, 1073741820
-};
-
-/* Index into huff_symbols[] of the first symbol having length L. */
-static const u16 huff_first_symbol[HPACK_HUFF_MAXLEN + 1] = {
-    0, 0, 0, 0, 0, 0, 10, 36, 68, 74, 74, 79, 82, 84, 90, 92,
-    95, 95, 95, 95, 98, 106, 119, 145, 174, 186, 190, 205, 224, 253, 253
-};
-
-/* Symbol values (0-255 = byte, 256 = EOS), grouped by ascending code
- * length and, within a length, by ascending symbol value -- this is the
- * order canonical Huffman assigns codes in, and matches the order the
- * symbols appear in RFC 7541 Appendix B. */
-static const u16 huff_symbols[256] = {
-     48,  49,  50,  97,  99, 101, 105, 111, 115, 116,  32,  37,  45,  46,  47,  51,
-     52,  53,  54,  55,  56,  57,  61,  65,  95,  98, 100, 102, 103, 104, 108, 109,
-    110, 112, 114, 117,  58,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,
-     77,  78,  79,  80,  81,  82,  83,  84,  85,  86,  87,  89, 106, 107, 113, 118,
-    119, 120, 121, 122,  38,  42,  44,  59,  88,  90,  33,  34,  40,  41,  63,  39,
-     43, 124,  35,  62,   0,  36,  64,  91,  93, 126,  94, 125,  60,  96, 123,  92,
-    195, 208, 128, 130, 131, 162, 184, 194, 224, 226, 153, 161, 167, 172, 176, 177,
-    179, 209, 216, 217, 227, 229, 230, 129, 132, 133, 134, 136, 146, 154, 156, 160,
-    163, 164, 169, 170, 173, 178, 181, 185, 186, 187, 189, 190, 196, 198, 228, 232,
-    233,   1, 135, 137, 138, 139, 140, 141, 143, 147, 149, 150, 151, 152, 155, 157,
-    158, 165, 166, 168, 174, 175, 180, 182, 183, 188, 191, 197, 231, 239,   9, 142,
-    144, 145, 148, 159, 171, 206, 215, 225, 236, 237, 199, 207, 234, 235, 192, 193,
-    200, 201, 202, 205, 210, 213, 218, 219, 238, 240, 242, 243, 255, 203, 204, 211,
-    212, 214, 221, 222, 223, 241, 244, 245, 246, 247, 248, 250, 251, 252, 253, 254,
-      2,   3,   4,   5,   6,   7,   8,  11,  12,  14,  15,  16,  17,  18,  19,  20,
-     21,  23,  24,  25,  26,  27,  28,  29,  30,  31, 127, 220, 249,  10,  13,  22
-};
-
 static __always_inline struct dynamic_table_key _new_dynamic_table_key(const struct ip4_conn *conn, u32 idx) {
     return (struct dynamic_table_key) {
         .conn = *conn,
@@ -210,6 +166,10 @@ static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *act
     *action = t.action;
 }
 
+static const u8 hpack_prefix_len[16] = {
+    4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7
+};
+
 static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u32 *n __arg_nonnull, u32 *k __arg_nonnull, u8 *j __arg_nonnull) {
     if (*ps == H2_KEY_LEN || *ps == H2_VAL_LEN) {
         *ps = PS_LEN_TO_STR(*ps);
@@ -229,14 +189,7 @@ static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnu
     else {
         *ps = H2_IDX;
         *j = 0;
-        *n = 4;
-
-        if ((c & 128) == 128) {
-            *n = 7;
-        }
-        else if ((c & 192) == 64) {
-            *n = 6;
-        }
+        *n = hpack_prefix_len[c >> 4];
     }
 
     *k = 0;
@@ -245,8 +198,6 @@ static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnu
 }
 
 static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, u32 *m, u32 *k, u8 *j) {
-    // bpf_debug("parse_hpack: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
-
     if (*j > 0) {
         if (PS_IS_STR(*ps)) {
             *j -= 1;
@@ -262,7 +213,6 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
 
     _next_hpack(c, ps, n, k, j);
     *m = 0;
-    // bpf_debug("next: c=%d, ps=%d, n=%d, m=%d, k=%d, j=%d", c, *ps, *n, *m, *k, *j);
 
     if (!PS_IS_STR(*ps)) {
         u8 mask = (1 << *n) - 1;
@@ -322,16 +272,11 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
     return 0;
 }
 
-static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16 end, u16* s, struct parse_res *pres, u16 *null_prefix) {
+static __always_inline int _parse_stg_from(const struct msg_ctx *ctx, u16 start, u16 end, u16* s, struct parse_res *pres, u16 *null_prefix) {
     const u8 *data = ctx->data;
     const u8 *data_end = ctx->data_end;
     u32 len = (u32)(data_end - data) & MAX_BYTES;
     if (end < len) len = end & MAX_BYTES;
-
-    if (len-start == 0) {
-        return 0;
-    }
-
     if (data + 9 > data_end) return 0;
 
     u8 type = data[3];
@@ -351,8 +296,70 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
         if (!dt_info) return 0;
     }
 
-    u32 n = 0, m = 0;
-    u32 i = 0, k = 0;
+    u32 i = 0;
+    u8 j = 0;
+    u16 id = 0;
+    u32 val = 0;
+
+    bpf_for(i, start, len+1) {
+        if (data + i + 1 > data_end) break;
+        u8 c = data[i];
+
+        // skb clears the TLS header, but does not remove it
+        if (null_prefix && c == '\0' && i == *null_prefix) {
+            *null_prefix = i + 1;
+            continue;
+        }
+
+        // each SETTINGS entry is a fixed 6-octet {u16 identifier, u32 value}
+        // pair (RFC 9113 6.5.1); this has nothing to do with HPACK encoding.
+        if (j < 2) {
+            id = (id << 8) | c;
+        }
+        else {
+            val = (val << 8) | c;
+        }
+        j++;
+
+        if (j == 6) {
+            if (id == SETTINGS_HEADER_TABLE_SIZE) {
+                dt_info->max_size = (u16)val;
+                bpf_debug("SETTINGS_HEADER_TABLE_SIZE: %u", (u16)val);
+            }
+            j = 0;
+            id = 0;
+            val = 0;
+        }
+    }
+
+    return i;
+}
+
+static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start, u16 end, u16* s, struct parse_res *pres, u16 *null_prefix) {
+    const u8 *data = ctx->data;
+    const u8 *data_end = ctx->data_end;
+    u32 len = (u32)(data_end - data) & MAX_BYTES;
+    if (end < len) len = end & MAX_BYTES;
+    if (data + 9 > data_end) return 0;
+
+    u8 type = data[3];
+    u8 flags = data[4];
+    u32 stream_id = data[5] << 24 | data[6] << 16 | data[7] << 8 | data[8];
+
+    struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx->conn);
+    if (!dt_info) {
+        struct dynamic_table_info new_info = {
+            .size = 0,
+            .count = 0,
+            .max_size = 100,
+        };
+        bpf_map_update_elem(&dynamic_table_info, &ctx->conn, &new_info, BPF_ANY);
+
+        dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx->conn);
+        if (!dt_info) return 0;
+    }
+
+    u32 n = 0, m = 0, i = 0, k = 0;
     u8 j = 0;
     s8 cid = -1;
     u8 add_to_dt = 0;
@@ -364,7 +371,6 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
     };
 
     bpf_for(i, start, len+1) {
-
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
 
@@ -439,14 +445,9 @@ static __always_inline int _parse_from(const struct msg_ctx *ctx, u16 start, u16
     return i;
 }
 
-static __always_inline int _parse_msg_from(const struct sk_msg_md *msg, u16 start, u16 end, u16* s, struct parse_res *pres) {
-    struct msg_ctx ctx = _new_msg_ctx(msg);
-    return _parse_from(&ctx, start, end, s, pres, NULL);
-}
-
 static __always_inline int _parse_skb_from(const struct __sk_buff *skb, u16 start, u16 end, u16* s, struct parse_res *pres, u16 *null_prefix) {
     struct msg_ctx ctx = _new_skb_ctx(skb);
-    return _parse_from(&ctx, start, end, s, pres, null_prefix);
+    return _parse_hdr_from(&ctx, start, end, s, pres, null_prefix);
 }
 
 SEC("freplace")
@@ -464,7 +465,9 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
 
     bpf_debug("Parsing HTTP/2 message with length %d, type %d, flags %d", len, type, flags);
 
-    if (type != 0x01) {
+    bool is_hdr = (type == 0x01);
+    bool is_stg = (type == 0x04);
+    if (!is_hdr && !(is_stg && flags == 0)) {
         return len + hdr_len;
     }
 
@@ -473,8 +476,16 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     }
 
     u16 s = s_any;
-    int res = _parse_msg_from(msg, hdr_len, len+hdr_len, &s, pres);
-    if (len + hdr_len > res) return -1;
+    struct msg_ctx ctx = _new_msg_ctx(msg);
+
+    int res;
+    if (is_hdr) {
+        res = _parse_hdr_from(&ctx, hdr_len, len+hdr_len, &s, pres, NULL);
+    } else {
+        res = _parse_stg_from(&ctx, hdr_len, len+hdr_len, &s, pres, NULL);
+    }
+
+    if (len > hdr_len + res) return -1;
 
     return res;
 }
@@ -539,7 +550,7 @@ int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct pa
         .conn = *conn
     };
 
-    int res = _parse_from(&ctx, hdr_len, len+hdr_len, &s, pres, null_prefix);
+    int res = _parse_hdr_from(&ctx, hdr_len, len+hdr_len, &s, pres, null_prefix);
 
     return res;
 }

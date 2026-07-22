@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["h1", "h2"]
+default = ["h1"]
 h1 = []
 h2 = []
 
@@ -26,3 +26,5 @@ beeline-include = { path = "../beeline-include" }
 reqwest = "0.13.4"
 tokio = { version = "1.52", features = ["full"] }
 utils = { path = "../utils" }
+h2 = "0.4.15"
+http = "1.4.2"

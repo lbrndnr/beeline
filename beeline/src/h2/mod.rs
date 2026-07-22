@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 mod dfa;
 mod parser;
-pub use parser::Parser;
+pub use parser::{AttachedParser, Parser, ip4_addr, ip4_conn};
 
 fn create_header_maps() -> (
     HashMap<String, usize>,

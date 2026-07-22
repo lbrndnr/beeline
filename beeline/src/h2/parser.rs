@@ -11,8 +11,10 @@ use libbpf_rs::{
     skel::{OpenSkel, Skel, SkelBuilder},
 };
 use std::mem::MaybeUninit;
+use std::net::SocketAddr;
 use tracing::{Level, debug, warn};
 use types::*;
+pub use types::{ip4_addr, ip4_conn};
 
 pub struct Parser {
     s_any: u16,
@@ -200,7 +202,7 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if attachment to the target program fails.
-    pub fn attach<'obj>(self, target: i32) -> Result<(Vec<Link>, Option<Link>, Option<Link>)> {
+    pub fn attach<'obj>(self, target: i32) -> Result<AttachedParser> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
         let skel_builder = ParserSkelBuilder::default();
@@ -229,26 +231,22 @@ impl Parser {
         let skel = open_skel.load()?;
         bpf_tracing::try_init(skel.object())?;
 
-        let mut parse = Vec::new();
+        let mut links = Vec::new();
         if self.parse_msg_fn.is_some() {
-            parse.push(skel.progs.parse_msg.attach()?);
+            links.push(skel.progs.parse_msg.attach()?);
         }
         if self.parse_skb_fn.is_some() {
-            parse.push(skel.progs.parse_skb.attach()?);
+            links.push(skel.progs.parse_skb.attach()?);
         }
         if self.parse_buf_fn.is_some() {
-            parse.push(skel.progs.parse_buf.attach()?);
+            links.push(skel.progs.parse_buf.attach()?);
         }
-        let matched = if self.matched_fn.is_some() {
-            Some(skel.progs.matched.attach()?)
-        } else {
-            None
-        };
-        let extract = if self.extract_fn.is_some() {
-            Some(skel.progs.extract_match.attach()?)
-        } else {
-            None
-        };
+        if self.matched_fn.is_some() {
+            links.push(skel.progs.matched.attach()?);
+        }
+        if self.extract_fn.is_some() {
+            links.push(skel.progs.extract_match.attach()?);
+        }
 
         let id = skel.maps.static_table.info()?.info.id;
         let static_table = MapHandle::from_map_id(id)?;
@@ -256,7 +254,11 @@ impl Parser {
 
         debug!("Beeline http/2 attached");
 
-        anyhow::Ok((parse, matched, extract))
+        let id = skel.maps.dynamic_table_info.info()?.info.id;
+        Ok(AttachedParser {
+            dynamic_table_info: MapHandle::from_map_id(id)?,
+            links,
+        })
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
@@ -268,5 +270,32 @@ impl Parser {
         }
 
         Ok(())
+    }
+}
+
+pub struct AttachedParser {
+    dynamic_table_info: MapHandle,
+
+    #[allow(dead_code)]
+    links: Vec<Link>,
+}
+
+impl AttachedParser {
+    // Reads the max dynamic table size (RFC 7541 4.2) currently recorded for `conn`, or
+    // `None` if no dynamic table state has been recorded for it yet.
+    pub fn max_dynamic_table_size(
+        &self,
+        local: SocketAddr,
+        remote: SocketAddr,
+    ) -> Result<Option<u16>> {
+        let conn = ip4_conn {
+            local: local.into(),
+            remote: remote.into(),
+        };
+
+        let key = unsafe { conn.as_bytes() };
+        let val = self.dynamic_table_info.lookup(key, MapFlags::empty())?;
+
+        Ok(val.map(|bytes| u16::from_ne_bytes([bytes[4], bytes[5]])))
     }
 }
