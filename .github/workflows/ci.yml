@@ -50,6 +50,9 @@ jobs:
               with:
                   toolchain: ${{ matrix.rust }}
                   components: rustfmt
+            - name: "Get kernel release"
+              id: kernel
+              run: echo "release=$(uname -r)" >> "${GITHUB_OUTPUT}"
             - name: Install apt dependencies
               uses: awalsh128/cache-apt-pkgs-action@v1
               with:

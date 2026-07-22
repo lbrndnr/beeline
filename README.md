@@ -1,6 +1,15 @@
-# Beeline
+# beeline: HTTP parsing in eBPF
 
-Beeline is an HTTP parser in eBPF.
+<!--[![Crates.io][crates-badge]][crates-url]-->
+[![GPL-v3 licensed][gpl-badge]][gpl-url]
+[![Build Status][actions-badge]][actions-url]
+
+<!--[crates-badge]: https://img.shields.io/crates/v/bpf-tracing.svg
+[crates-url]: https://crates.io/crates/bpf-tracing-->
+[gpl-badge]: https://img.shields.io/badge/License-GPL_v3-blue.svg
+[gpl-url]: LICENSE
+[actions-badge]: https://github.com/lbrndnr/beeline-rs/actions/workflows/ci.yml/badge.svg
+[actions-url]: https://github.com/lbrndnr/beeline-rs/actions/workflows/ci.yml
 
 ## Build
 
