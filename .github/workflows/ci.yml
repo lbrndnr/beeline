@@ -50,18 +50,33 @@ jobs:
               with:
                   toolchain: ${{ matrix.rust }}
                   components: rustfmt
-            - name: Install deps
+            - name: Install apt dependencies
+              uses: awalsh128/cache-apt-pkgs-action@v1
+              with:
+                  packages: clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-${{ steps.kernel.outputs.release }}
+                  version: 1.0
+            - name: Configure apt dependencies
               run: |
-                  sudo apt-get update
-                  sudo apt-get install --yes --no-install-recommends clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-$(uname -r)
-                  sudo ln -s /usr/include/asm-generic /usr/include/asm
+                  sudo ln -sf /usr/include/asm-generic /usr/include/asm
                   sudo rm -f /bin/clang && sudo ln -s /usr/bin/clang-18 /bin/clang && sudo ln -s /usr/bin/llvm-strip-18 /bin/llvm-strip
-                  git clone --recurse-submodules https://github.com/libbpf/bpftool.git
-                  cd bpftool/src && make && sudo make install
+            - name: Cache bpftool
+              id: cache-bpftool
+              uses: actions/cache@v4
+              with:
+                  path: /usr/local/sbin/bpftool
+                  key: bpftool-v7.7.0-${{ runner.os }}-${{ runner.arch }}
+            - name: Install bpftool
+              if: steps.cache-bpftool.outputs.cache-hit != 'true'
+              env:
+                  BPFTOOL_VERSION: v7.7.0
+              run: |
+                  arch=$([ "${{ runner.arch }}" = "ARM64" ] && echo arm64 || echo amd64)
+                  curl -sSL "https://github.com/libbpf/bpftool/releases/download/${BPFTOOL_VERSION}/bpftool-${BPFTOOL_VERSION}-${arch}.tar.gz" | sudo tar -xz -C /usr/local/sbin bpftool
+                  sudo chmod +x /usr/local/sbin/bpftool
             - name: Dump BTF
               run: |
                   mkdir -p include
-                  bpftool btf dump file /sys/kernel/btf/vmlinux format c > include/vmlinux.h
+                  /usr/local/sbin/bpftool btf dump file /sys/kernel/btf/vmlinux format c > include/vmlinux.h
             - uses: Swatinem/rust-cache@v2
             - name: Build
               run: cargo build --profile=${{ matrix.profile }} --locked --verbose --workspace
