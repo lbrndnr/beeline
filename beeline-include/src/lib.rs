@@ -5,6 +5,8 @@ use tracing::level_filters::ParseLevelFilterError;
 pub fn clang_args() -> Result<Vec<OsString>, ParseLevelFilterError> {
     let mut args = vec![OsString::from("-I"), OsString::from(include_path_root())];
     args.extend_from_slice(&bpf_tracing_include::clang_args_from_default_env());
+    let size = format!("BPF_TRACING_RINGBUF_SIZE=8192");
+    args.extend_from_slice(&[OsString::from("-D"), OsString::from(size)]);
 
     Ok(args)
 }

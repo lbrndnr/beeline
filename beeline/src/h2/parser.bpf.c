@@ -23,7 +23,6 @@ struct header_field {
 };
 
 #define STATIC_TABLE_SIZE 61
-
 #define SETTINGS_HEADER_TABLE_SIZE 0x1
 
 struct {
@@ -47,7 +46,7 @@ struct {
 
 struct dynamic_table_info {
     u16 count;
-    u16 size;
+    u16 current_size_approx;
     u16 max_size;
 };
 
@@ -119,7 +118,7 @@ static __always_inline struct dynamic_table_key _new_dynamic_table_key(const str
 }
 
 static __always_inline u32 _get_dynamic_table_index(u32 idx, u32 dt_size) {
-    u32 end_idx = STATIC_TABLE_SIZE + dt_size - 1;
+    u32 end_idx = STATIC_TABLE_SIZE + dt_size;
     return (end_idx - idx) + STATIC_TABLE_SIZE + 1;
 }
 
@@ -134,7 +133,7 @@ static __always_inline const u8* _extract_match(const struct msg_ctx *ctx, const
         struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx->conn);
         if (dt_info == NULL) return NULL;
 
-        u32 idx = _get_dynamic_table_index(m->idx, dt_info->size);
+        u32 idx = _get_dynamic_table_index(m->idx, dt_info->count);
         struct dynamic_table_key key = _new_dynamic_table_key(&ctx->conn, idx);
         hf = bpf_map_lookup_elem(&dynamic_table, &key);
     }
@@ -221,7 +220,7 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     }
 }
 
-static __always_inline int _get_table_entry(const struct ip4_conn *conn __arg_nonnull, u32 idx, u16 dt_size, struct header_field **hf) {
+static __always_inline void _get_table_entry(const struct ip4_conn *conn __arg_nonnull, u32 idx, u16 dt_size, struct header_field **hf) {
     if (idx > STATIC_TABLE_SIZE) {
         u32 nidx = _get_dynamic_table_index(idx, dt_size);
 
@@ -232,8 +231,6 @@ static __always_inline int _get_table_entry(const struct ip4_conn *conn __arg_no
     else {
         *hf = bpf_map_lookup_elem(&static_table, &idx);
     }
-
-    return (hf == NULL) ? -1 : idx;
 }
 
 static __always_inline s8 _match_header_key(const u8 *key __arg_nonnull, u16 key__sz, u16 *s __arg_nonnull) {
@@ -257,12 +254,17 @@ static __always_inline struct dynamic_table_info* _get_dynamic_table(const struc
     if (info) return info;
 
     struct dynamic_table_info new_info = {
-        .size = 0,
         .count = 0,
+        .current_size_approx = 0,
         .max_size = 4096,
     };
     bpf_map_update_elem(&dynamic_table_info, conn, &new_info, BPF_ANY);
     return bpf_map_lookup_elem(&dynamic_table_info, conn);
+}
+
+static __always_inline u16 _approx_dynamic_table_entry_size(const struct hdr_match *key, const struct hdr_match *val) {
+    // TODO: check if the key and val are huffman encoded
+    return (key->len + val->len) * 6 + 32;
 }
 
 __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_nonnull, u32 idx, const struct hdr_match *key __arg_nonnull, const struct hdr_match *val __arg_nonnull) {
@@ -278,7 +280,6 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
     bpf_probe_read_kernel(dt_val.val, val->len & 0x1F, val_ptr);
 
     bpf_map_update_elem(&dynamic_table, &dt_key, &dt_val, BPF_ANY);
-    bpf_debug("dt: add with index %d, approximated size %d", idx, (key_len + val->len) * 6);
     bpf_debug("dt: add key { %d %d %d }", key->idx, key->len, key->in_msg);
     bpf_debug("dt: add val { %d %d %d }", val->idx, val->len, val->in_msg);
 
@@ -380,7 +381,8 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             add_to_dt = (u8)(n == 6);
             *s = s_any;
             struct header_field *hf;
-            int idx = _get_table_entry(&ctx->conn, k, dt_info->size, &hf);
+
+            _get_table_entry(&ctx->conn, k, dt_info->count, &hf);
             if (hf == NULL) {
                 cid = -1;
                 continue;
@@ -392,7 +394,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
                 // the one in the table
                 if (n == 7) {
                     pres->ms[cid & MAX_MATCH_MASK] = (struct hdr_match) {
-                        .idx = idx,
+                        .idx = k,
                         .len = 31,
                         .in_msg = false,
                     };
@@ -414,7 +416,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             }
         }
         else if (ps == H2_VAL_LEN) {
-            dt_info->size += add_to_dt;
+            dt_info->count += add_to_dt;
 
             if (cid >= 0) {
                 struct hdr_match val = (struct hdr_match) {
@@ -423,7 +425,8 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
                     .in_msg = true,
                 };
                 if (add_to_dt) {
-                    dt_info->count++;
+                    dt_info->current_size_approx += _approx_dynamic_table_entry_size(&key, &val);
+                    bpf_debug("dt: add with index %d, approximated size %d", STATIC_TABLE_SIZE + dt_info->count, dt_info->current_size_approx);
                     _add_dynamic_table_entry(ctx, STATIC_TABLE_SIZE + dt_info->count, &key, &val);
                 }
 

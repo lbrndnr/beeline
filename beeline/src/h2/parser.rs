@@ -287,7 +287,7 @@ pub struct AttachedParser {
 #[derive(Default, Clone)]
 pub struct DynamicTableInfo {
     pub count: u16,
-    pub size: u16,
+    pub current_size_approx: u16,
     pub max_size: u16,
 }
 

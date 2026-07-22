@@ -49,9 +49,6 @@ fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
     }
 }
 
-/// A minimal HTTP/2 client built directly on top of the `h2` crate, wrapping a single
-/// connection so tests can issue several requests over it (e.g. to exercise the HPACK
-/// dynamic table) and inspect the connection's own local/remote addresses.
 struct Client {
     send_request: client::SendRequest<Bytes>,
     local_addr: SocketAddr,
@@ -370,39 +367,54 @@ async fn update_dynamic_table_size() {
     drop(h1);
 }
 
-// #[tokio::test]
-// async fn evict_header_field_from_dynamic_table() {
-//     let addr = server::launch().await.expect("launch server");
+#[tokio::test]
+async fn evict_header_field_from_dynamic_table() {
+    let addr = server::launch().await.expect("launch server");
 
-//     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-//     let h1 = attach_preface_parser(prog.prog_fd());
-//     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
+    let h1 = attach_preface_parser(prog.prog_fd());
+    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, "user-agent"]);
 
-//     let hdr = "asdfqwer";
+    let hdr = "asdfqwer";
 
-//     let client = Client::connect(addr, Some(128)).await;
-//     client
-//         .get(
-//             format!("http://{}", addr),
-//             &[(
-//                 HeaderName::from_static(TEST_HEADER),
-//                 HeaderValue::from_static(hdr),
-//             )],
-//         )
-//         .await;
+    let client = Client::connect(addr, Some(128)).await;
+    client
+        .get(
+            format!("http://{}", addr),
+            &[(
+                HeaderName::from_static(TEST_HEADER),
+                HeaderValue::from_static(hdr),
+            )],
+        )
+        .await;
 
-//     let info = h2
-//         .dynamic_table_info(client.local_addr, client.remote_addr)
-//         .expect("dynamic_table_info");
+    let info = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    let expected_size = (huffman_encode(TEST_HEADER).len() + huffman_encode(hdr).len()) * 6 + 32;
+    assert_eq!(info.max_size, 128);
+    assert_eq!(info.count, 2);
+    assert_eq!(info.current_size_approx, expected_size as u16);
 
-//     let expected_size = huffman_encode(hdr).len() * 6;
-//     assert_eq!(info.max_size, 128);
-//     assert_eq!(info.count, 1);
-//     assert_eq!(info.size, expected_size as u16);
+    // client
+    //     .get(
+    //         format!("http://{}", addr),
+    //         &[(header::USER_AGENT, HeaderValue::from_static(hdr))],
+    //     )
+    //     .await;
 
-//     drop(prog);
-//     drop(h2);
-//     drop(h1);
-// }
+    // // it should have evicted other headers, but not yet TEST_HEADER
+    // let info = h2
+    //     .dynamic_table_info(client.local_addr, client.remote_addr)
+    //     .expect("dynamic_table_info");
+    // let expected_size = (huffman_encode("user-agent").len() + huffman_encode(hdr).len()) * 6 + 32;
+    // assert_eq!(info.max_size, 128);
+    // assert_eq!(info.count, 3);
+    // assert_eq!(info.current_size_approx, expected_size as u16);
+
+    drop(prog);
+    drop(h2);
+    drop(h1);
+}
