@@ -205,6 +205,35 @@ async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
 }
 
 #[tokio::test]
+async fn parse_header_field_never_indexing_new_name() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
+
+    let h1 = attach_preface_parser(prog.prog_fd());
+    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
+
+    let secret = "my secret";
+    let mut val = HeaderValue::from_static(secret);
+    val.set_sensitive(true);
+
+    let client = Client::connect(addr, None).await;
+    client
+        .get(
+            format!("http://{}", addr),
+            &[(header::HeaderName::from_static(TEST_HEADER), val)],
+        )
+        .await;
+
+    assert_match_eq(&prog, 0, Some(secret));
+
+    drop(prog);
+    drop(h2);
+    drop(h1);
+}
+
+#[tokio::test]
 async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() {
     let addr = server::launch().await.expect("launch server");
 
@@ -232,36 +261,36 @@ async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() 
     drop(h1);
 }
 
-// #[tokio::test]
-// async fn parse_header_field_incremental_indexing_new_name() {
-//     let addr = server::launch().await.expect("launch server");
+#[tokio::test]
+async fn parse_header_field_incremental_indexing_new_name() {
+    let addr = server::launch().await.expect("launch server");
 
-//     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-//     let h1 = attach_preface_parser(prog.prog_fd());
-//     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, "path"]);
+    let h1 = attach_preface_parser(prog.prog_fd());
+    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, "path"]);
 
-//     let client = Client::connect(addr, None).await;
-//     let hdr = "beeline";
-//     let path = "/bee/1234";
+    let client = Client::connect(addr, None).await;
+    let hdr = "beeline";
+    let path = "/bee/1234";
 
-//     client
-//         .get(
-//             format!("http://{}{}", addr, path),
-//             &[(
-//                 HeaderName::from_static(TEST_HEADER),
-//                 HeaderValue::from_static(hdr),
-//             )],
-//         )
-//         .await;
-//     assert_match_eq(&prog, 0, Some(hdr));
-//     assert_match_eq(&prog, 1, Some(path));
+    client
+        .get(
+            format!("http://{}{}", addr, path),
+            &[(
+                HeaderName::from_static(TEST_HEADER),
+                HeaderValue::from_static(hdr),
+            )],
+        )
+        .await;
+    assert_match_eq(&prog, 0, Some(hdr));
+    assert_match_eq(&prog, 1, Some(path));
 
-//     drop(prog);
-//     drop(h2);
-//     drop(h1);
-// }
+    drop(prog);
+    drop(h2);
+    drop(h1);
+}
 
 #[tokio::test]
 async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {

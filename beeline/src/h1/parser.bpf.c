@@ -72,13 +72,13 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
         // but it makes the verifier happy when we don't use else if here
         if ((a & a_start_capture) != 0) {
             u16 cid = a & a_id_mask & MAX_MATCH_MASK;
-            bpf_debug("Start capture range (%d, ?) in [%d, ...]", cid, i);
+            bpf_debug("start capture range (%d, ?) in [%d, ...]", cid, i);
             cidx[cid] = i;
         }
         if ((a & a_end_capture) != 0) {
             u16 cid = ((a & a_id_1_mask) >> 6) & MAX_MATCH_MASK;
             u16 rid = a & a_id_2_mask & MAX_MATCH_MASK;
-            bpf_debug("End capture range (%d, %d) in [%d, %d]", cid, rid, cidx[cid], i - cidx[cid]);
+            bpf_debug("end capture range (%d, %d) in [%d, %d]", cid, rid, cidx[cid], i - cidx[cid]);
 
             ms[rid] = (struct hdr_match) {
                 .idx = cidx[cid],
@@ -89,7 +89,7 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
             cidx[cid] = i;
         }
         if ((a & a_done) != 0) {
-            bpf_debug("Done parsing at %d", i);
+            bpf_debug("done parsing at %d", i);
             return i+1;
         }
     }

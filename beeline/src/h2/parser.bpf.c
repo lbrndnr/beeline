@@ -176,7 +176,7 @@ static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnu
         *j = *k-1;
         *n = 0;
     }
-    else if (*ps == H2_IDX && ((*n == 6 && *k == 64) || (*n == 4 && *k == 0))) {
+    else if (*ps == H2_IDX && *k == 0 && (*n == 6 || *n == 4)) {
         *ps = H2_KEY_LEN;
         *j = 0;
         *n = 7;
@@ -279,8 +279,8 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
 
     bpf_map_update_elem(&dynamic_table, &dt_key, &dt_val, BPF_ANY);
     bpf_debug("dt: add with index %d, approximated size %d", idx, (key_len + val->len) * 6);
-    bpf_debug("dt: add key { %d %d %d}", key->idx, key->len, key->in_msg);
-    bpf_debug("dt: add val { %d %d %d}", val->idx, val->len, val->in_msg);
+    bpf_debug("dt: add key { %d %d %d }", key->idx, key->len, key->in_msg);
+    bpf_debug("dt: add val { %d %d %d }", val->idx, val->len, val->in_msg);
 
     return 0;
 }
@@ -325,7 +325,7 @@ static __always_inline int _parse_stg_from(const struct msg_ctx *ctx, u16 start,
         if (j == 6) {
             if (id == SETTINGS_HEADER_TABLE_SIZE) {
                 dt_info->max_size = (u16)val;
-                bpf_debug("SETTINGS_HEADER_TABLE_SIZE: %u", (u16)val);
+                bpf_debug("stg: table header size: %u", (u16)val);
             }
             j = 0;
             id = 0;
@@ -372,7 +372,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
         }
 
         _parse_hpack(c, &ps, &n, &m, &k, &j);
-        bpf_debug("hpack idx: %d, ps: %d, n: %d, k: %d, j: %d", i, ps, n, k, j);
+        bpf_trace("hdr: hpack idx: %d, ps: %d, n: %d, k: %d, j: %d", i, ps, n, k, j);
 
         if (j != 0 && !PS_IS_STR(ps)) continue;
 
