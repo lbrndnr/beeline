@@ -3,18 +3,21 @@ use crate::{
     autoload_and_attach,
     h2::{Action, create_header_maps, dfa::Dfa},
 };
-use anyhow::Result;
+use anyhow::{Result, bail};
 use as_bytes::AsBytes;
 use httlib_huffman as huffman;
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, Skel, SkelBuilder},
 };
+use plain::Plain;
 use std::mem::MaybeUninit;
 use std::net::SocketAddr;
 use tracing::{Level, debug, warn};
 use types::*;
 pub use types::{ip4_addr, ip4_conn};
+
+extern crate plain;
 
 pub struct Parser {
     s_any: u16,
@@ -280,14 +283,22 @@ pub struct AttachedParser {
     links: Vec<Link>,
 }
 
+#[repr(C)]
+#[derive(Default, Clone)]
+pub struct DynamicTableInfo {
+    pub count: u16,
+    pub size: u16,
+    pub max_size: u16,
+}
+
+unsafe impl Plain for DynamicTableInfo {}
+
 impl AttachedParser {
-    // Reads the max dynamic table size (RFC 7541 4.2) currently recorded for `conn`, or
-    // `None` if no dynamic table state has been recorded for it yet.
-    pub fn max_dynamic_table_size(
+    pub fn dynamic_table_info(
         &self,
         local: SocketAddr,
         remote: SocketAddr,
-    ) -> Result<Option<u16>> {
+    ) -> Result<DynamicTableInfo> {
         let conn = ip4_conn {
             local: local.into(),
             remote: remote.into(),
@@ -295,7 +306,14 @@ impl AttachedParser {
 
         let key = unsafe { conn.as_bytes() };
         let val = self.dynamic_table_info.lookup(key, MapFlags::empty())?;
+        let Some(val) = val else {
+            bail!("no dynamic table info for connection");
+        };
 
-        Ok(val.map(|bytes| u16::from_ne_bytes([bytes[4], bytes[5]])))
+        let info: Result<&DynamicTableInfo, _> = plain::from_bytes(&val);
+        match info {
+            Ok(info) => Ok(info.clone()),
+            Err(e) => bail!("failed to parse dynamic table info: {:?}", e),
+        }
     }
 }

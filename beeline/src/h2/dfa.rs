@@ -48,7 +48,6 @@ impl DfaBuilder<'_> {
 
     pub fn capture_field_value(&mut self) -> &mut Self {
         assert!(self.prev_trans.is_some());
-        println!("capture_field_value {:?}", self.prev_trans);
 
         let cid = self.dfa.insert_new_capture_start();
 

@@ -1,10 +1,13 @@
 use std::net::SocketAddr;
 
 use ::h2::{RecvStream, client};
-use beeline::{h1, h2};
+use beeline::{
+    h1,
+    h2::{self, AttachedParser},
+};
 use bytes::Bytes;
 use httlib_huffman as huffman;
-use http::{HeaderValue, Request, Response, header};
+use http::{HeaderName, HeaderValue, Request, Response, header};
 use libbpf_rs::Link;
 use tokio::net::TcpStream;
 use utils::{
@@ -12,27 +15,37 @@ use utils::{
     test::{OpenObject, TestProgram},
 };
 
+const TEST_HEADER: &str = "testheader";
+
+fn huffman_encode(val: &str) -> Vec<u8> {
+    let mut res = Vec::new();
+    huffman::encode(val.as_bytes(), &mut res).unwrap();
+    res
+}
+
+fn huffman_decode(val: &[u8]) -> String {
+    let mut res = Vec::new();
+    huffman::decode(val, &mut res, huffman::DecoderSpeed::OneBit).unwrap();
+    String::from_utf8(res).unwrap()
+}
+
 fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
     let actual_hf = prog.get_match(idx).expect("get_match");
-
-    let mut actual = Vec::new();
-    if let Some(actual_hf) = &actual_hf {
-        huffman::decode(actual_hf, &mut actual, huffman::DecoderSpeed::OneBit).unwrap();
-    }
-    let actual = String::from_utf8(actual).unwrap();
+    let actual = actual_hf.map(|val| huffman_decode(&val));
 
     if expected.is_none() {
         assert!(
-            actual_hf.is_none(),
-            "get_match({idx}): {actual}, expected: none"
+            actual.is_none(),
+            "get_match({idx}): {}, expected: none",
+            actual.unwrap()
         );
     } else {
         let expected = expected.unwrap();
         assert!(
-            actual_hf.is_some(),
+            actual.is_some(),
             "get_match({idx}): none, expected: {expected}"
         );
-        assert_eq!(actual.as_str(), expected);
+        assert_eq!(actual.unwrap().as_str(), expected);
     }
 }
 
@@ -72,6 +85,7 @@ impl Client {
         }
     }
 
+    #[allow(unused_results)]
     async fn get(
         &self,
         uri: String,
@@ -87,7 +101,11 @@ impl Client {
         let (response, _) = send_request
             .send_request(request, true)
             .expect("send_request");
-        response.await.expect("response")
+        let response = response.await.expect("response");
+
+        assert!(response.status().is_success());
+
+        response
     }
 }
 
@@ -102,26 +120,31 @@ fn attach_preface_parser(prog_fd: i32) -> (Vec<Link>, Option<Link>, Option<Link>
         .expect("attach parser")
 }
 
+fn attach_h2_parser(prog_fd: i32, hdrs: &[&str]) -> AttachedParser {
+    let mut h2 = h2::Parser::new();
+    for hdr in hdrs {
+        h2 = h2.capture_http_hdr(hdr).expect("capture {hdr}");
+    }
+
+    h2.replace_parse_msg("parse_h2")
+        .replace_extract("extract_h2_match")
+        .attach(prog_fd)
+        .expect("attach parser")
+}
+
 #[tokio::test]
-async fn parse_indexed_header_field() {
+async fn parse_header_field_indexed_in_static_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = h2::Parser::new()
-        .capture_http_hdr("method")
-        .expect("match method")
-        .replace_parse_msg("parse_h2")
-        .replace_extract("extract_h2_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let h2 = attach_h2_parser(prog.prog_fd(), &["method"]);
 
     let client = Client::connect(addr, None).await;
-    let resp = client.get(format!("http://{}", addr), &[]).await;
+    client.get(format!("http://{}", addr), &[]).await;
 
-    assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some("GET"));
 
     drop(prog);
@@ -130,28 +153,21 @@ async fn parse_indexed_header_field() {
 }
 
 #[tokio::test]
-async fn parse_literal_header_field_no_indexing_indexed() {
+async fn parse_header_field_no_indexing_name_indexed_in_static_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = h2::Parser::new()
-        .capture_http_hdr("authorization")
-        .expect("match authorization")
-        .replace_parse_msg("parse_h2")
-        .replace_extract("extract_h2_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let h2 = attach_h2_parser(prog.prog_fd(), &["authorization"]);
 
     let client = Client::connect(addr, None).await;
     let auth = HeaderValue::from_static("Basic YmVlbGluZTpiZWVsaW5l"); // beeline:beeline in base64
-    let resp = client
+    client
         .get(format!("http://{}", addr), &[(header::AUTHORIZATION, auth)])
         .await;
 
-    assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some("Basic YmVlbGluZTpiZWVsaW5l"));
 
     drop(prog);
@@ -160,34 +176,27 @@ async fn parse_literal_header_field_no_indexing_indexed() {
 }
 
 #[tokio::test]
-async fn parse_literal_header_field_no_indexing_not_indexed() {
+async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = h2::Parser::new()
-        .capture_http_hdr("sensitive")
-        .expect("match sensitive")
-        .replace_parse_msg("parse_h2")
-        .replace_extract("extract_h2_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let h2 = attach_h2_parser(prog.prog_fd(), &["sensitive"]);
 
     let secret = "my secret";
     let mut val = HeaderValue::from_static(secret);
     val.set_sensitive(true);
 
     let client = Client::connect(addr, None).await;
-    let resp = client
+    client
         .get(
             format!("http://{}", addr),
             &[(header::HeaderName::from_static("sensitive"), val)],
         )
         .await;
 
-    assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some(secret));
 
     drop(prog);
@@ -196,34 +205,25 @@ async fn parse_literal_header_field_no_indexing_not_indexed() {
 }
 
 #[tokio::test]
-async fn parse_literal_header_field_incremental_indexing_indexed() {
+async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = h2::Parser::new()
-        .capture_http_hdr("user-agent")
-        .expect("match user-agent")
-        .capture_http_hdr("path")
-        .expect("match path")
-        .replace_parse_msg("parse_h2")
-        .replace_extract("extract_h2_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let h2 = attach_h2_parser(prog.prog_fd(), &["user-agent", "path"]);
 
     let client = Client::connect(addr, None).await;
     let user_agent = "beeline";
     let path = "/bee/1234";
-    let resp = client
+
+    client
         .get(
             format!("http://{}{}", addr, path),
             &[(header::USER_AGENT, HeaderValue::from_static(user_agent))],
         )
         .await;
-
-    assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some(user_agent));
     assert_match_eq(&prog, 1, Some(path));
 
@@ -232,28 +232,51 @@ async fn parse_literal_header_field_incremental_indexing_indexed() {
     drop(h1);
 }
 
+// #[tokio::test]
+// async fn parse_header_field_incremental_indexing_new_name() {
+//     let addr = server::launch().await.expect("launch server");
+
+//     let mut open_obj = OpenObject::new();
+//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
+
+//     let h1 = attach_preface_parser(prog.prog_fd());
+//     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, "path"]);
+
+//     let client = Client::connect(addr, None).await;
+//     let hdr = "beeline";
+//     let path = "/bee/1234";
+
+//     client
+//         .get(
+//             format!("http://{}{}", addr, path),
+//             &[(
+//                 HeaderName::from_static(TEST_HEADER),
+//                 HeaderValue::from_static(hdr),
+//             )],
+//         )
+//         .await;
+//     assert_match_eq(&prog, 0, Some(hdr));
+//     assert_match_eq(&prog, 1, Some(path));
+
+//     drop(prog);
+//     drop(h2);
+//     drop(h1);
+// }
+
 #[tokio::test]
-async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
+async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = h2::Parser::new()
-        .capture_http_hdr("user-agent")
-        .expect("match user-agent")
-        .capture_http_hdr("accept-language")
-        .expect("match accept-language")
-        .replace_parse_msg("parse_h2")
-        .replace_extract("extract_h2_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let h2 = attach_h2_parser(prog.prog_fd(), &["user-agent", "accept-language"]);
 
     let client = Client::connect(addr, None).await;
     let user_agent = "beeline";
     let lang = "sumsum";
-    let resp = client
+    client
         .get(
             format!("http://{}", addr),
             &[
@@ -262,26 +285,22 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
             ],
         )
         .await;
-
-    assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some(user_agent));
     assert_match_eq(&prog, 1, Some(lang));
 
     // repeat the request with other headers
     // this will check if it indexes the dynamic table correctly
-    let resp = client
+    client
         .get(
             format!("http://{}", addr),
             &[(header::VIA, HeaderValue::from_static("the hive"))],
         )
         .await;
-
-    assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, None);
     assert_match_eq(&prog, 1, None);
 
     // we repeat this request to check if the header has been added to the dynamic table
-    let resp = client
+    client
         .get(
             format!("http://{}", addr),
             &[
@@ -290,8 +309,6 @@ async fn parse_literal_header_field_incremental_indexing_in_dynamic_table() {
             ],
         )
         .await;
-
-    assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 0, Some(user_agent));
     assert_match_eq(&prog, 1, Some(lang));
 
@@ -308,22 +325,15 @@ async fn update_dynamic_table_size() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = h2::Parser::new()
-        .replace_parse_msg("parse_h2")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let h2 = attach_h2_parser(prog.prog_fd(), &[]);
 
     let client = Client::connect(addr, Some(1234)).await;
-
-    let resp = client.get(format!("http://{}", addr), &[]).await;
-
-    assert_eq!(resp.status(), 200);
+    client.get(format!("http://{}", addr), &[]).await;
 
     let max_size = h2
-        .max_dynamic_table_size(client.local_addr, client.remote_addr)
-        .expect("max_dynamic_table_size")
-        .expect("dynamic table state recorded for connection");
-
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info")
+        .max_size;
     assert_eq!(max_size, 1234);
 
     drop(prog);
@@ -333,50 +343,37 @@ async fn update_dynamic_table_size() {
 
 // #[tokio::test]
 // async fn evict_header_field_from_dynamic_table() {
-//     tracing_subscriber::fmt()
-// .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-// .try_init().expect("init tracing");
-
-//     let server = server::launch().await;
+//     let addr = server::launch().await.expect("launch server");
 
 //     let mut open_obj = OpenObject::new();
 //     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-//     let h1 = h1::Parser::new()
-//         .match_preface()
-//         .expect("match preface")
-//         .replace_parse_msg("parse_h1")
-//         .replace_matched("matched_h1")
-//         .replace_extract("extract_h1_match")
-//         .attach(prog.prog_fd())
-//         .expect("attach parser");
+//     let h1 = attach_preface_parser(prog.prog_fd());
+//     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
 
-//     let h2 = h2::Parser::new()
-//         .capture_http_hdr("user-agent")
-//         .expect("match user-agent")
-//         .capture_http_hdr("accept-language")
-//         .expect("match accept-language")
-//         .replace_parse_msg("parse_h2")
-//         .replace_extract("extract_h2_match")
-//         .attach(prog.prog_fd())
-//         .expect("attach parser");
+//     let hdr = "asdfqwer";
 
-//     let client = Client::connect(addr, None).await;
-//     let user_agent = "beeline";
-//     let lang = "sumsum";
-//     let resp = client
-//         .get(format!("http://{}", addr))
-//         .header(header::USER_AGENT, user_agent)
-//         .header(header::ACCEPT_LANGUAGE, lang)
-//         .send()
-//         .await
-//         .expect("request");
+//     let client = Client::connect(addr, Some(128)).await;
+//     client
+//         .get(
+//             format!("http://{}", addr),
+//             &[(
+//                 HeaderName::from_static(TEST_HEADER),
+//                 HeaderValue::from_static(hdr),
+//             )],
+//         )
+//         .await;
 
-//     assert_eq!(resp.status(), 200);
-//     assert_match_eq(&prog, 0, Some(user_agent));
-//     assert_match_eq(&prog, 1, Some(lang));
+//     let info = h2
+//         .dynamic_table_info(client.local_addr, client.remote_addr)
+//         .expect("dynamic_table_info");
 
-// //     drop(prog);
+//     let expected_size = huffman_encode(hdr).len() * 6;
+//     assert_eq!(info.max_size, 128);
+//     assert_eq!(info.count, 1);
+//     assert_eq!(info.size, expected_size as u16);
+
+//     drop(prog);
 //     drop(h2);
 //     drop(h1);
 // }
