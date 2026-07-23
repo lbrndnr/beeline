@@ -286,9 +286,10 @@ pub struct AttachedParser {
 #[repr(C)]
 #[derive(Default, Clone)]
 pub struct DynamicTableInfo {
-    pub count: u16,
-    pub current_size_approx: u16,
-    pub max_size: u16,
+    pub virtual_count: u32,
+    pub count: u32,
+    pub current_size_approx: u32,
+    pub max_size: u32,
 }
 
 unsafe impl Plain for DynamicTableInfo {}

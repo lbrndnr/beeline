@@ -37,17 +37,24 @@ struct dynamic_table_key {
     u32 idx;
 };
 
+struct dynamic_table_entry {
+    struct header_field field;
+    u32 trailing_bytes;
+    u32 size;
+};
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
     __type(key, struct dynamic_table_key);
-	__type(value, struct header_field);
+	__type(value, struct dynamic_table_entry);
 } dynamic_table SEC(".maps");
 
 struct dynamic_table_info {
-    u16 count;
-    u16 current_size_approx;
-    u16 max_size;
+    u32 virtual_count;
+    u32 count;
+    u32 current_size_approx;
+    u32 max_size;
 };
 
 struct {
@@ -128,23 +135,23 @@ static __always_inline const u8* _extract_match(const struct msg_ctx *ctx, const
         return ctx->data + m->idx;
     }
 
-    struct header_field *hf = NULL;
+    struct dynamic_table_entry *entry = NULL;
     if (m->idx > STATIC_TABLE_SIZE) {
         struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx->conn);
         if (dt_info == NULL) return NULL;
 
-        u32 idx = _get_dynamic_table_index(m->idx, dt_info->count);
+        u32 idx = _get_dynamic_table_index(m->idx, dt_info->virtual_count);
         struct dynamic_table_key key = _new_dynamic_table_key(&ctx->conn, idx);
-        hf = bpf_map_lookup_elem(&dynamic_table, &key);
+        entry = bpf_map_lookup_elem(&dynamic_table, &key);
     }
     else {
         u32 key = m->idx;
-        hf = bpf_map_lookup_elem(&static_table, &key);
+        entry = bpf_map_lookup_elem(&static_table, &key);
     }
 
-    if (hf == NULL) return NULL;
+    if (entry == NULL) return NULL;
     barrier(); // this is needed so that clang doesn't reorder the null check
-    return (is_key) ? hf->key : hf->val;
+    return (is_key) ? entry->field.key : entry->field.val;
 }
 
 static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *action) {
@@ -220,13 +227,22 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     }
 }
 
+static __always_inline void _get_last_dynamic_table_entry(const struct ip4_conn *conn __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, struct dynamic_table_entry **entry) {
+    u32 dt_idx = _get_dynamic_table_index(STATIC_TABLE_SIZE + dt_info->virtual_count-1, dt_info->virtual_count);
+    struct dynamic_table_key key = _new_dynamic_table_key(conn, dt_idx);
+    *entry = bpf_map_lookup_elem(&dynamic_table, &key);
+}
+
 static __always_inline void _get_table_entry(const struct ip4_conn *conn __arg_nonnull, u32 idx, u16 dt_size, struct header_field **hf) {
     if (idx > STATIC_TABLE_SIZE) {
-        u32 nidx = _get_dynamic_table_index(idx, dt_size);
+        u32 dt_idx = _get_dynamic_table_index(idx, dt_size);
+        struct dynamic_table_key key = _new_dynamic_table_key(conn, dt_idx);
 
-        struct dynamic_table_key key = _new_dynamic_table_key(conn, nidx);
-        bpf_debug("lookup dt: %d -> %d", idx, nidx);
-        *hf = bpf_map_lookup_elem(&dynamic_table, &key);
+        bpf_trace("lookup dt: %d (hpack: %d)", dt_idx, idx);
+
+        // `field` is the first member of `dynamic_table_entry`, so this cast
+        // preserves NULL and avoids an extra branch on the lookup result.
+        *hf = (struct header_field *)bpf_map_lookup_elem(&dynamic_table, &key);
     }
     else {
         *hf = bpf_map_lookup_elem(&static_table, &idx);
@@ -267,21 +283,68 @@ static __always_inline u16 _approx_dynamic_table_entry_size(const struct hdr_mat
     return (key->len + val->len) * 6 + 32;
 }
 
+// evicts the least recently used entries from the dynamic table to make room for the new entry of size `new_entry_size`.
+// returns the number of bytes freed.
+__noinline __weak u32 _try_evict_dynamic_table_entries(const struct msg_ctx *ctx __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, u32 new_entry_size) {
+    bpf_trace("dt: try evicting %dB (%d actual entries)", new_entry_size, dt_info->count);
+
+    u32 freed = 0;
+    bpf_repeat(dt_info->count) {
+        if (dt_info->current_size_approx + new_entry_size < dt_info->max_size) break;
+
+        struct dynamic_table_entry *last_entry;
+        _get_last_dynamic_table_entry(&ctx->conn, dt_info, &last_entry);
+        if (!last_entry) {
+            bpf_error("dt: no last entry");
+            break;
+        }
+
+        if (last_entry->trailing_bytes > new_entry_size) {
+            bpf_trace("dt: last entry's trailing bytes sufficient");
+            last_entry->trailing_bytes -= new_entry_size;
+            freed += new_entry_size;
+            break;
+        }
+        else {
+            bpf_trace("dt: evicting entry at index %d", dt_info->virtual_count - 1);
+            dt_info->count--;
+            dt_info->virtual_count--;
+            freed += last_entry->trailing_bytes + last_entry->size;
+
+            struct dynamic_table_key key = _new_dynamic_table_key(&ctx->conn, dt_info->virtual_count - 1);
+            bpf_map_delete_elem(&dynamic_table, &key);
+        }
+    }
+
+    bpf_trace("dt: evicted %dB", freed);
+    dt_info->current_size_approx -= freed;
+
+    return freed;
+}
+
 __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_nonnull, u32 idx, const struct hdr_match *key __arg_nonnull, const struct hdr_match *val __arg_nonnull) {
     const u8 *key_ptr = _extract_match(ctx, key, true);
     const u8 *val_ptr = _extract_match(ctx, val, false);
     if (!key_ptr || !val_ptr) return -1;
 
     struct dynamic_table_key dt_key = _new_dynamic_table_key(&ctx->conn, idx);
-
-    struct header_field dt_val = { 0 };
+    struct header_field hf = { 0 };
     u16 key_len = (key->in_msg) ? key->len & 0x1F : 0x1F;
-    bpf_probe_read_kernel(dt_val.key, key_len, key_ptr);
-    bpf_probe_read_kernel(dt_val.val, val->len & 0x1F, val_ptr);
+    bpf_probe_read_kernel(hf.key, key_len, key_ptr);
+    bpf_probe_read_kernel(hf.val, val->len & 0x1F, val_ptr);
+
+    struct dynamic_table_entry dt_val = {
+        .field = hf,
+        .size = _approx_dynamic_table_entry_size(key, val),
+        .trailing_bytes = 0,
+    };
 
     bpf_map_update_elem(&dynamic_table, &dt_key, &dt_val, BPF_ANY);
     bpf_debug("dt: add key { %d %d %d }", key->idx, key->len, key->in_msg);
     bpf_debug("dt: add val { %d %d %d }", val->idx, val->len, val->in_msg);
+
+    struct dynamic_table_info *dt_info = _get_dynamic_table(&ctx->conn);
+    if (!dt_info) return 0;
 
     return 0;
 }
@@ -362,6 +425,9 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
         .in_msg = true,
     };
 
+    struct dynamic_table_entry *last_entry = NULL;
+    _get_last_dynamic_table_entry(&ctx->conn, dt_info, &last_entry);
+
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
@@ -382,7 +448,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             *s = s_any;
             struct header_field *hf;
 
-            _get_table_entry(&ctx->conn, k, dt_info->count, &hf);
+            _get_table_entry(&ctx->conn, k, dt_info->virtual_count, &hf);
             if (hf == NULL) {
                 cid = -1;
                 continue;
@@ -416,20 +482,39 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             }
         }
         else if (ps == H2_VAL_LEN) {
-            dt_info->count += add_to_dt;
+            struct hdr_match val = (struct hdr_match) {
+                .idx = i + 1,
+                .len = k,
+                .in_msg = true,
+            };
+
+            if (add_to_dt) {
+                // evict least recently used entry if necessary
+                u32 entry_size = _approx_dynamic_table_entry_size(&key, &val);
+                _try_evict_dynamic_table_entries(ctx, dt_info, entry_size);
+
+                dt_info->virtual_count += 1;
+                dt_info->current_size_approx += _approx_dynamic_table_entry_size(&key, &val);
+
+                // if the cid >= 0, then we have to actually add it to the dynamic table
+                // if not, we just act like it, adding it "virtually"
+                if (cid >= 0) {
+                    dt_info->count += 1;
+                    bpf_debug("dt: add with index %d, new total approximated size %d", STATIC_TABLE_SIZE + dt_info->count, dt_info->current_size_approx);
+                    _add_dynamic_table_entry(ctx, STATIC_TABLE_SIZE + dt_info->virtual_count, &key, &val);
+                    _get_last_dynamic_table_entry(&ctx->conn, dt_info, &last_entry);
+                }
+                // else {
+                //     if (last_entry) {
+                //         last_entry->trailing_bytes += entry_size;
+                //     }
+                //     else {
+                //         // TODO: we also have a "leading bytes" field to the dynamic table
+                //     }
+                // }
+            }
 
             if (cid >= 0) {
-                struct hdr_match val = (struct hdr_match) {
-                    .idx = i + 1,
-                    .len = k,
-                    .in_msg = true,
-                };
-                if (add_to_dt) {
-                    dt_info->current_size_approx += _approx_dynamic_table_entry_size(&key, &val);
-                    bpf_debug("dt: add with index %d, approximated size %d", STATIC_TABLE_SIZE + dt_info->count, dt_info->current_size_approx);
-                    _add_dynamic_table_entry(ctx, STATIC_TABLE_SIZE + dt_info->count, &key, &val);
-                }
-
                 pres->ms[cid & MAX_MATCH_MASK] = val;
                 cid = -1;
             }
