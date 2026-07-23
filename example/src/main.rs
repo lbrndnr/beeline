@@ -19,8 +19,12 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let index_html = SetStatus::new(ServeFile::new("assets/index.html"), StatusCode::NOT_FOUND);
-    let serve_dir = ServeDir::new("assets").not_found_service(index_html);
+    let assets_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
+    let index_html = SetStatus::new(
+        ServeFile::new(format!("{assets_dir}/index.html")),
+        StatusCode::NOT_FOUND,
+    );
+    let serve_dir = ServeDir::new(assets_dir).not_found_service(index_html);
 
     let app = axum::Router::new()
         .fallback_service(serve_dir)
