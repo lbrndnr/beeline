@@ -1,5 +1,6 @@
 use axum::http::StatusCode;
-use std::net::SocketAddr;
+use fastpath::{OpenObject, Server};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tower_http::{
     services::{ServeDir, ServeFile},
@@ -7,6 +8,8 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+mod fastpath;
 
 #[tokio::main]
 async fn main() {
@@ -31,7 +34,24 @@ async fn main() {
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+
+    let routes = HashMap::from([
+        (
+            "/index.html".to_string(),
+            PathBuf::from(format!("{assets_dir}/index.html")),
+        ),
+        (
+            "/script.js".to_string(),
+            PathBuf::from(format!("{assets_dir}/script.js")),
+        ),
+    ]);
+
+    let mut open_obj = OpenObject::new();
+    let fastpath = Server::attach(addr, &mut open_obj, routes).expect("attach");
+
     let listener = TcpListener::bind(addr).await.unwrap();
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
+
+    drop(fastpath);
 }
