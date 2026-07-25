@@ -1,4 +1,5 @@
 #include "beeline.h"
+#include "bpf_tracing.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
@@ -104,7 +105,7 @@ int msg_verdict(struct sk_msg_md *msg) {
     };
 
     bool is_downstream = (ikey.remote.ip4 == ip4 && ikey.remote.port == port);
-    bpf_printk("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
+    bpf_trace("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
 
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
     bool store_matches = false;
@@ -114,7 +115,7 @@ int msg_verdict(struct sk_msg_md *msg) {
     if (is_h2) {
         msg_len = parse_h2(msg, &pres);
         if (msg_len < 0) {
-            bpf_printk("ERROR: Failed to parse h2 message: %s", msg->data);
+            bpf_error("Failed to parse h2 message: %s", msg->data);
             return SK_PASS;
         }
 
@@ -123,7 +124,7 @@ int msg_verdict(struct sk_msg_md *msg) {
     else {
         msg_len = parse_h1(msg, &pres);
         if (msg_len < 0) {
-            bpf_printk("ERROR: Failed to parse h1 message: %s", msg->data);
+            bpf_error("Failed to parse h1 message: %s", msg->data);
             return SK_PASS;
         }
 
@@ -163,7 +164,7 @@ int msg_verdict(struct sk_msg_md *msg) {
         }
     }
 
-    bpf_printk("Apply verdict to %d/%dB", msg_len, msg->size);
+    bpf_debug("Apply verdict to %d/%dB", msg_len, msg->size);
     bpf_msg_apply_bytes(msg, msg_len);
 
     return SK_PASS;
@@ -186,15 +187,15 @@ int monitor_sockets(struct bpf_sock_ops *ops) {
             }
         };
 
-        bpf_printk("Established socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
+        bpf_debug("Established socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
 
         if (skey.remote.ip4 == ip4 && skey.remote.port == port) {
             if (bpf_sock_hash_update(ops, &sock_map, &skey, BPF_ANY) < 0) {
-                bpf_printk("ERROR: Failed to add socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
+                bpf_error("Failed to add socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
                 return SK_PASS;
             }
 
-            bpf_printk("Add socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
+            bpf_debug("Add socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
         }
     }
 

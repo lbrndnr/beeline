@@ -481,7 +481,6 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             }
         }
         else if (ps == H2_VAL_LEN) {
-<<<<<<< HEAD
             struct hdr_match val = (struct hdr_match) {
                 .idx = i + 1,
                 .len = k,
@@ -515,22 +514,6 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             }
 
             if (cid >= 0) {
-=======
-            dt_info->count += add_to_dt;
-
-            if (cid >= 0) {
-                struct hdr_match val = (struct hdr_match) {
-                    .idx = i + 1,
-                    .len = k,
-                    .in_msg = true,
-                };
-                if (add_to_dt) {
-                    dt_info->current_size_approx += _approx_dynamic_table_entry_size(&key, &val);
-                    bpf_debug("dt: add with index %d, approximated size %d", STATIC_TABLE_SIZE + dt_info->count, dt_info->current_size_approx);
-                    _add_dynamic_table_entry(ctx, STATIC_TABLE_SIZE + dt_info->count, &key, &val);
-                }
-
->>>>>>> 0ee6912 (h2: track dynamic table size)
                 pres->ms[cid & MAX_MATCH_MASK] = val;
                 cid = -1;
             }
