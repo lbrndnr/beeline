@@ -64,7 +64,7 @@ jobs:
                   sudo rm -f /bin/clang && sudo ln -s /usr/bin/clang-18 /bin/clang && sudo ln -s /usr/bin/llvm-strip-18 /bin/llvm-strip
             - name: Cache bpftool
               id: cache-bpftool
-              uses: actions/cache@v4
+              uses: actions/cache@v6
               with:
                   path: /usr/local/sbin/bpftool
                   key: bpftool-v7.7.0-${{ runner.os }}-${{ runner.arch }}
