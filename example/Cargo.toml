@@ -16,7 +16,7 @@ bpf-tracing = "0.0.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace", "set-status"] }
+tower-http = { version = "0.7", features = ["fs", "trace", "set-status"] }
 libbpf-rs = "0.26.2"
 libc = "0.2.189"
 anyhow = "1.0.104"
