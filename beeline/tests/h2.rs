@@ -139,18 +139,14 @@ async fn parse_header_field_indexed_in_static_table() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[METHOD_HEADER]);
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[METHOD_HEADER]);
 
     let client = Client::connect(addr, None).await;
     client.get(format!("http://{}", addr), &[]).await;
 
     let method_val = HeaderValue::from_static("GET");
     assert_match_eq(&prog, 0, Some(&method_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -160,8 +156,8 @@ async fn parse_header_field_no_indexing_name_indexed_in_static_table() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[header::AUTHORIZATION]);
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[header::AUTHORIZATION]);
 
     let auth_val = HeaderValue::from_static("Basic YmVlbGluZTpiZWVsaW5l"); // beeline:beeline in base64
 
@@ -174,10 +170,6 @@ async fn parse_header_field_no_indexing_name_indexed_in_static_table() {
         .await;
 
     assert_match_eq(&prog, 0, Some(&auth_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -187,8 +179,8 @@ async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
 
     let mut test_header_val = HeaderValue::from_static("my secret");
     test_header_val.set_sensitive(true);
@@ -202,10 +194,6 @@ async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
         .await;
 
     assert_match_eq(&prog, 0, Some(&test_header_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -215,8 +203,8 @@ async fn parse_header_field_never_indexing_new_name() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
 
     let mut test_header_val = HeaderValue::from_static("my secret");
     test_header_val.set_sensitive(true);
@@ -230,10 +218,6 @@ async fn parse_header_field_never_indexing_new_name() {
         .await;
 
     assert_match_eq(&prog, 0, Some(&test_header_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -243,8 +227,8 @@ async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[header::USER_AGENT, PATH_HEADER]);
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[header::USER_AGENT, PATH_HEADER]);
 
     let user_agent_val = HeaderValue::from_static("beeline");
     let path = "/bee/1234";
@@ -259,10 +243,6 @@ async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() 
         .await;
     assert_match_eq(&prog, 0, Some(&user_agent_val));
     assert_match_eq(&prog, 1, Some(&path_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 // #[tokio::test]
@@ -277,8 +257,8 @@ async fn parse_header_field_incremental_indexing_new_name() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, PATH_HEADER]);
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, PATH_HEADER]);
 
     let test_header_val = HeaderValue::from_static("beeline");
     let path = "/bee/1234";
@@ -293,10 +273,6 @@ async fn parse_header_field_incremental_indexing_new_name() {
         .await;
     assert_match_eq(&prog, 0, Some(&test_header_val));
     assert_match_eq(&prog, 1, Some(&path_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -306,8 +282,8 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(
         prog.prog_fd(),
         &[header::USER_AGENT, header::ACCEPT_LANGUAGE],
     );
@@ -351,10 +327,6 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
         .await;
     assert_match_eq(&prog, 0, Some(&user_agent_val));
     assert_match_eq(&prog, 1, Some(&lang_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -364,7 +336,7 @@ async fn update_dynamic_table_size() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
+    let _h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[]);
 
     let client = Client::connect(addr, Some(1234)).await;
@@ -375,10 +347,6 @@ async fn update_dynamic_table_size() {
         .expect("dynamic_table_info")
         .max_size;
     assert_eq!(max_size, 1234);
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -388,7 +356,7 @@ async fn evict_header_field_from_dynamic_table() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
-    let h1 = attach_preface_parser(prog.prog_fd());
+    let _h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, header::USER_AGENT]);
 
     let test_header_val = HeaderValue::from_static("asdfqwerasdfqwerasdfqwerasdfqwer");
@@ -460,8 +428,4 @@ async fn evict_header_field_from_dynamic_table() {
     assert_eq!(info.count, expected_dt.len() as u32);
     assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
     assert_match_eq(&prog, 1, Some(&test_header_val));
-
-    drop(prog);
-    drop(h2);
-    drop(h1);
 }

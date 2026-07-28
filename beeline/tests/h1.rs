@@ -23,7 +23,7 @@ async fn match_h2_preface() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-    let h1 = Parser::new()
+    let _h1 = Parser::new()
         .match_preface()
         .expect("match preface")
         .replace_parse_msg("parse_h1")
@@ -44,9 +44,6 @@ async fn match_h2_preface() {
 
     assert_eq!(resp.status(), 200);
     assert_eq!(prog.num_upgraded_conns().unwrap(), 1);
-
-    drop(prog);
-    drop(h1);
 }
 
 #[tokio::test]
@@ -56,7 +53,7 @@ async fn parse_simple_header() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-    let h1 = Parser::new()
+    let _h1 = Parser::new()
         .match_preface()
         .expect("match preface")
         .match_http_hdr("user-agent")
@@ -78,9 +75,6 @@ async fn parse_simple_header() {
 
     assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 1, user_agent);
-
-    drop(prog);
-    drop(h1);
 }
 
 // #[tokio::test]
@@ -90,7 +84,7 @@ async fn parse_simple_header() {
 //     let mut open_obj = OpenObject::new();
 //     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-//     let h1 = Parser::new()
+//     let _h1 = Parser::new()
 //         .match_preface()
 //         .expect("match preface")
 //         .match_http_hdr("user-agent")
@@ -113,8 +107,6 @@ async fn parse_simple_header() {
 //     assert_eq!(resp.status(), 200);
 //     assert_match_eq(&prog, 1, user_agent);
 
-// //     drop(prog);
-//     drop(h1);
 // }
 
 // #[tokio::test]
@@ -124,7 +116,7 @@ async fn parse_simple_header() {
 //     let mut open_obj = OpenObject::new();
 //     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-//     let h1 = Parser::new()
+//     let _h1 = Parser::new()
 //         .match_preface()
 //         .expect("match preface")
 //         .match_http_hdr("user-agent")
@@ -147,8 +139,6 @@ async fn parse_simple_header() {
 //     assert_eq!(resp.status(), 200);
 //     assert_match_eq(&prog, 1, user_agent);
 
-// //     drop(prog);
-//     drop(h1);
 // }
 
 #[tokio::test]
@@ -158,7 +148,7 @@ async fn parse_subsequent_headers() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-    let h1 = Parser::new()
+    let _h1 = Parser::new()
         .match_preface()
         .expect("match preface")
         .match_http_hdr("user-agent")
@@ -185,7 +175,4 @@ async fn parse_subsequent_headers() {
     assert_eq!(resp.status(), 200);
     assert_match_eq(&prog, 1, user_agent);
     assert_match_eq(&prog, 2, lang);
-
-    drop(prog);
-    drop(h1);
 }
