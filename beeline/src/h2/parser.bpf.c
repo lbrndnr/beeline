@@ -17,9 +17,14 @@ enum h2_parse_state {
 #define PS_IS_STR(ps) (ps > H2_VAL_LEN)
 #define PS_LEN_TO_STR(ps) (ps + 2)
 
+#define HEADER_FIELD_MAXLEN 128
+#define HEADER_FIELD_MASK (HEADER_FIELD_MAXLEN - 1)
+
 struct header_field {
-    u8 key[32];
-    u8 val[32];
+    u8 key[HEADER_FIELD_MAXLEN];
+    u8 key_len;
+    u8 val[HEADER_FIELD_MAXLEN];
+    u8 val_len;
 };
 
 #define STATIC_TABLE_SIZE 61
@@ -39,7 +44,6 @@ struct dynamic_table_key {
 
 struct dynamic_table_entry {
     struct header_field field;
-    u32 trailing_bytes;
     u32 size;
 };
 
@@ -50,11 +54,18 @@ struct {
 	__type(value, struct dynamic_table_entry);
 } dynamic_table SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, struct dynamic_table_entry);
+} dynamic_table_entry SEC(".maps");
+
 struct dynamic_table_info {
-    u32 virtual_count;
     u32 count;
-    u32 current_size_approx;
+    u32 size;
     u32 max_size;
+    u32 deleted;
 };
 
 struct {
@@ -76,6 +87,55 @@ const u16 s_any = 0;
 #define MAX_TRANS 256
 
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
+
+#define HPACK_HUFF_MAXLEN 30
+
+static const u8 huff_count[HPACK_HUFF_MAXLEN + 2] = {
+    0, 0, 0, 0, 0, 10, 26, 32, 6, 0, 5, 3, 2, 6, 2, 3,
+    0, 0, 0, 3, 8, 13, 26, 29, 12, 4, 15, 19, 29, 0, 4, 0
+};
+
+static const u32 huff_first_code[HPACK_HUFF_MAXLEN + 2] = {
+    0, 0, 0, 0, 0, 0, 20, 92, 248, 508, 1016, 2042, 4090, 8184, 16380, 32764,
+    65534, 131068, 262136, 524272, 1048550, 2097116, 4194258, 8388568, 16777194,
+    33554412, 67108832, 134217694, 268435426, 536870910, 1073741820, 0
+};
+
+#define HPACK_HUFF_STEP(c, b) do {                              \
+    code = (code << 1) | (((c) >> (b)) & 1u);                   \
+    len++;                                                      \
+    if (len > HPACK_HUFF_MAXLEN) {                                \
+        code = 0;                                                \
+        len = 0;                                                 \
+    }                                                             \
+    else {                                                        \
+        u32 rel = code - huff_first_code[len];                    \
+        if (rel < huff_count[len]) {                              \
+            n++;                                                 \
+            code = 0;                                             \
+            len = 0;                                             \
+        }                                                         \
+    }                                                              \
+} while (0)
+
+static __always_inline u32 hpack_huffman_decoded_len(const u8 *src, u16 src__sz) {
+    u32 code = 0, len = 0, n = 0;
+    u32 i = 0;
+
+    bpf_for (i, 0, src__sz) {
+        u8 c = src[i];
+        HPACK_HUFF_STEP(c, 7);
+        HPACK_HUFF_STEP(c, 6);
+        HPACK_HUFF_STEP(c, 5);
+        HPACK_HUFF_STEP(c, 4);
+        HPACK_HUFF_STEP(c, 3);
+        HPACK_HUFF_STEP(c, 2);
+        HPACK_HUFF_STEP(c, 1);
+        HPACK_HUFF_STEP(c, 0);
+    }
+
+    return n;
+}
 
 struct msg_ctx {
     u8 *data;
@@ -124,23 +184,25 @@ static __always_inline struct dynamic_table_key _new_dynamic_table_key(const str
     };
 }
 
-static __always_inline u32 _get_dynamic_table_index(u32 idx, u32 dt_size) {
-    u32 end_idx = STATIC_TABLE_SIZE + dt_size;
-    return (end_idx - idx) + STATIC_TABLE_SIZE + 1;
+static __always_inline u32 _get_dynamic_table_index(const struct dynamic_table_info *dt_info __arg_nonnull, u32 idx) {
+    u32 end_idx = STATIC_TABLE_SIZE + dt_info->count + dt_info->deleted;
+    return (end_idx - idx) + STATIC_TABLE_SIZE;
 }
 
-static __always_inline const u8* _extract_match(const struct msg_ctx *ctx, const struct hdr_match *m, bool is_key) {
+static __always_inline void _extract_match(const struct msg_ctx *ctx, const struct hdr_match *m, bool is_key, u8 **out, u32 *len) {
     if (m->in_msg) {
-        if (ctx->data + m->idx + m->len > ctx->data_end) return NULL;
-        return ctx->data + m->idx;
+        if (ctx->data + m->idx + m->len > ctx->data_end) return;
+        *out = ctx->data + m->idx;
+        *len = m->len;
+        return;
     }
 
     struct dynamic_table_entry *entry = NULL;
     if (m->idx > STATIC_TABLE_SIZE) {
         struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx->conn);
-        if (dt_info == NULL) return NULL;
+        if (dt_info == NULL) return;
 
-        u32 idx = _get_dynamic_table_index(m->idx, dt_info->virtual_count);
+        u32 idx = _get_dynamic_table_index(dt_info, m->idx);
         struct dynamic_table_key key = _new_dynamic_table_key(&ctx->conn, idx);
         entry = bpf_map_lookup_elem(&dynamic_table, &key);
     }
@@ -149,9 +211,16 @@ static __always_inline const u8* _extract_match(const struct msg_ctx *ctx, const
         entry = bpf_map_lookup_elem(&static_table, &key);
     }
 
-    if (entry == NULL) return NULL;
+    if (entry == NULL) return;
     barrier(); // this is needed so that clang doesn't reorder the null check
-    return (is_key) ? entry->field.key : entry->field.val;
+
+    if (is_key) {
+        *out = entry->field.key;
+        *len = entry->field.key_len;
+    } else {
+        *out = entry->field.val;
+        *len = entry->field.val_len;
+    }
 }
 
 static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *action) {
@@ -227,15 +296,16 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     }
 }
 
-static __always_inline void _get_last_dynamic_table_entry(const struct ip4_conn *conn __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, struct dynamic_table_entry **entry) {
-    u32 dt_idx = _get_dynamic_table_index(STATIC_TABLE_SIZE + dt_info->virtual_count-1, dt_info->virtual_count);
-    struct dynamic_table_key key = _new_dynamic_table_key(conn, dt_idx);
+static __always_inline void _get_lru_dynamic_table_entry(const struct ip4_conn *conn __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, struct dynamic_table_entry **entry) {
+    u32 end_idx = STATIC_TABLE_SIZE + dt_info->count + dt_info->deleted - 1;
+    bpf_trace("dt: getting LRU entry at index %d", end_idx);
+    struct dynamic_table_key key = _new_dynamic_table_key(conn, end_idx);
     *entry = bpf_map_lookup_elem(&dynamic_table, &key);
 }
 
-static __always_inline void _get_table_entry(const struct ip4_conn *conn __arg_nonnull, u32 idx, u16 dt_size, struct header_field **hf) {
+static __always_inline void _get_table_entry(const struct ip4_conn *conn __arg_nonnull, const struct dynamic_table_info *dt_info __arg_nonnull, u32 idx, struct header_field **hf) {
     if (idx > STATIC_TABLE_SIZE) {
-        u32 dt_idx = _get_dynamic_table_index(idx, dt_size);
+        u32 dt_idx = _get_dynamic_table_index(dt_info, idx);
         struct dynamic_table_key key = _new_dynamic_table_key(conn, dt_idx);
 
         bpf_trace("lookup dt: %d (hpack: %d)", dt_idx, idx);
@@ -271,16 +341,12 @@ static __always_inline struct dynamic_table_info* _get_dynamic_table(const struc
 
     struct dynamic_table_info new_info = {
         .count = 0,
-        .current_size_approx = 0,
+        .size = 0,
         .max_size = 4096,
+        .deleted = 0,
     };
     bpf_map_update_elem(&dynamic_table_info, conn, &new_info, BPF_ANY);
     return bpf_map_lookup_elem(&dynamic_table_info, conn);
-}
-
-static __always_inline u16 _approx_dynamic_table_entry_size(const struct hdr_match *key, const struct hdr_match *val) {
-    // TODO: check if the key and val are huffman encoded
-    return (key->len + val->len) * 6 + 32;
 }
 
 // evicts the least recently used entries from the dynamic table to make room for the new entry of size `new_entry_size`.
@@ -290,61 +356,76 @@ __noinline __weak u32 _try_evict_dynamic_table_entries(const struct msg_ctx *ctx
 
     u32 freed = 0;
     bpf_repeat(dt_info->count) {
-        if (dt_info->current_size_approx + new_entry_size < dt_info->max_size) break;
+        if (dt_info->size + new_entry_size < dt_info->max_size) break;
 
         struct dynamic_table_entry *last_entry;
-        _get_last_dynamic_table_entry(&ctx->conn, dt_info, &last_entry);
+        _get_lru_dynamic_table_entry(&ctx->conn, dt_info, &last_entry);
         if (!last_entry) {
-            bpf_error("dt: no last entry");
+            bpf_error("dt: no entries");
             break;
         }
 
-        if (last_entry->trailing_bytes > new_entry_size) {
-            bpf_trace("dt: last entry's trailing bytes sufficient");
-            last_entry->trailing_bytes -= new_entry_size;
-            freed += new_entry_size;
-            break;
-        }
-        else {
-            bpf_trace("dt: evicting entry at index %d", dt_info->virtual_count - 1);
-            dt_info->count--;
-            dt_info->virtual_count--;
-            freed += last_entry->trailing_bytes + last_entry->size;
+        bpf_trace("dt: evicting LRU entry");
+        dt_info->count--;
+        dt_info->deleted++;
+        freed += last_entry->size;
 
-            struct dynamic_table_key key = _new_dynamic_table_key(&ctx->conn, dt_info->virtual_count - 1);
-            bpf_map_delete_elem(&dynamic_table, &key);
-        }
+        struct dynamic_table_key key = _new_dynamic_table_key(&ctx->conn, dt_info->count - 1);
+        bpf_map_delete_elem(&dynamic_table, &key);
     }
 
     bpf_trace("dt: evicted %dB", freed);
-    dt_info->current_size_approx -= freed;
+    dt_info->size -= freed;
 
     return freed;
 }
 
-__noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_nonnull, u32 idx, const struct hdr_match *key __arg_nonnull, const struct hdr_match *val __arg_nonnull) {
-    const u8 *key_ptr = _extract_match(ctx, key, true);
-    const u8 *val_ptr = _extract_match(ctx, val, false);
-    if (!key_ptr || !val_ptr) return -1;
+__noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, const struct hdr_match *key __arg_nonnull, const struct hdr_match *val __arg_nonnull) {
+    u8 *key_ptr = NULL;
+    u32 key_len = 0;
+    _extract_match(ctx, key, true, &key_ptr, &key_len);
+    if (!key_ptr) return -1;
 
+    u8 *val_ptr = NULL;
+    u32 val_len = 0;
+    _extract_match(ctx, val, false, &val_ptr, &val_len);
+    if (!val_ptr) return -1;
+
+    key_len = key_len & HEADER_FIELD_MASK;
+    val_len = val_len & HEADER_FIELD_MASK;
+
+    int per_cpu_key = 0;
+    struct dynamic_table_entry *dt_val = bpf_map_lookup_elem(&dynamic_table_entry, &per_cpu_key);
+    if (!dt_val) return -1;
+
+    u32 idx = STATIC_TABLE_SIZE + dt_info->count;
     struct dynamic_table_key dt_key = _new_dynamic_table_key(&ctx->conn, idx);
-    struct header_field hf = { 0 };
-    u16 key_len = (key->in_msg) ? key->len & 0x1F : 0x1F;
-    bpf_probe_read_kernel(hf.key, key_len, key_ptr);
-    bpf_probe_read_kernel(hf.val, val->len & 0x1F, val_ptr);
 
-    struct dynamic_table_entry dt_val = {
-        .field = hf,
-        .size = _approx_dynamic_table_entry_size(key, val),
-        .trailing_bytes = 0,
-    };
+    __builtin_memset(dt_val, 0, sizeof(*dt_val));
+    int ret = bpf_probe_read_kernel(dt_val->field.key, key_len, key_ptr);
+    dt_val->field.key_len = !ret * key_len;
 
-    bpf_map_update_elem(&dynamic_table, &dt_key, &dt_val, BPF_ANY);
+    ret = bpf_probe_read_kernel(dt_val->field.val, val_len, val_ptr);
+    dt_val->field.val_len = !ret * val_len;
+
+    u16 key_len_decoded = hpack_huffman_decoded_len(dt_val->field.key, key_len);
+    u16 val_len_decoded = hpack_huffman_decoded_len(dt_val->field.val, val_len);
+    dt_val->size = key_len_decoded + val_len_decoded + 32;
+
+    _try_evict_dynamic_table_entries(ctx, dt_info, dt_val->size);
+    if (dt_info->size + dt_val->size > dt_info->max_size) {
+        bpf_debug("dt: entry size %d exceeds max size %d", dt_val->size, dt_info->max_size);
+        return -1;
+    }
+
+    bpf_map_update_elem(&dynamic_table, &dt_key, dt_val, BPF_ANY);
+
+    dt_info->size += dt_val->size;
+    dt_info->count += 1;
+
+    bpf_debug("dt: add with index %d, key size: %d, val size: %d, new total size %d", dt_key.idx, key_len_decoded, val_len_decoded, dt_info->size);
     bpf_debug("dt: add key { %d %d %d }", key->idx, key->len, key->in_msg);
     bpf_debug("dt: add val { %d %d %d }", val->idx, val->len, val->in_msg);
-
-    struct dynamic_table_info *dt_info = _get_dynamic_table(&ctx->conn);
-    if (!dt_info) return 0;
 
     return 0;
 }
@@ -425,9 +506,6 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
         .in_msg = true,
     };
 
-    struct dynamic_table_entry *last_entry = NULL;
-    _get_last_dynamic_table_entry(&ctx->conn, dt_info, &last_entry);
-
     bpf_for(i, start, len+1) {
         if (data + i + 1 > data_end) break;
         u8 c = data[i];
@@ -442,25 +520,24 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
         bpf_trace("hdr: hpack idx: %d, ps: %d, n: %d, k: %d, j: %d", i, ps, n, k, j);
 
         if (j != 0 && !PS_IS_STR(ps)) continue;
-
         if (ps == H2_IDX) {
             add_to_dt = (u8)(n == 6);
             *s = s_any;
             struct header_field *hf;
-            _get_table_entry(&ctx->conn, k, dt_info->virtual_count, &hf);
+            _get_table_entry(&ctx->conn, dt_info, k, &hf);
             if (hf == NULL) {
                 cid = -1;
                 continue;
             }
 
-            cid = _match_header_key(hf->key, 32, s);
+            cid = _match_header_key(hf->key, hf->key_len, s);
             if (cid >= 0) {
                 // check if we are replacing the exisiting entry, or taking
                 // the one in the table
                 if (n == 7) {
                     pres->ms[cid & MAX_MATCH_MASK] = (struct hdr_match) {
                         .idx = k,
-                        .len = 31,
+                        .len = HEADER_FIELD_MASK,
                         .in_msg = false,
                     };
                 }
@@ -469,6 +546,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             key.in_msg = false;
         }
         else if (ps == H2_KEY_LEN) {
+            key.idx = i + 1;
             key.len = k;
             key.in_msg = true;
         }
@@ -488,29 +566,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             };
 
             if (add_to_dt) {
-                // evict least recently used entry if necessary
-                u32 entry_size = _approx_dynamic_table_entry_size(&key, &val);
-                _try_evict_dynamic_table_entries(ctx, dt_info, entry_size);
-
-                dt_info->virtual_count += 1;
-                dt_info->current_size_approx += _approx_dynamic_table_entry_size(&key, &val);
-
-                // if the cid >= 0, then we have to actually add it to the dynamic table
-                // if not, we just act like it, adding it "virtually"
-                if (cid >= 0) {
-                    dt_info->count += 1;
-                    bpf_debug("dt: add with index %d, new total approximated size %d", STATIC_TABLE_SIZE + dt_info->count, dt_info->current_size_approx);
-                    _add_dynamic_table_entry(ctx, STATIC_TABLE_SIZE + dt_info->virtual_count, &key, &val);
-                    _get_last_dynamic_table_entry(&ctx->conn, dt_info, &last_entry);
-                }
-                // else {
-                //     if (last_entry) {
-                //         last_entry->trailing_bytes += entry_size;
-                //     }
-                //     else {
-                //         // TODO: we also have a "leading bytes" field to the dynamic table
-                //     }
-                // }
+                _add_dynamic_table_entry(ctx, dt_info, &key, &val);
             }
 
             if (cid >= 0) {
@@ -649,11 +705,13 @@ int extract_match(const struct sk_msg_md *msg, const struct parse_res *pres __ar
     if (m.len == 0) return -1;
 
     struct msg_ctx ctx = _new_msg_ctx(msg);
-    const u8 *ptr = _extract_match(&ctx, &m, false);
+    u8 *ptr = NULL;
+    u32 len = 0;
+    _extract_match(&ctx, &m, false, &ptr, &len);
     if (ptr == NULL) return -1;
 
     *str = (struct hdr_str) {
-        .len = m.len,
+        .len = len,
         .ptr = ptr
     };
     return 0;

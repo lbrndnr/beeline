@@ -158,12 +158,16 @@ impl Parser {
                 huffman::encode(val.as_bytes(), &mut hf_val)?;
             }
 
-            hf_key.resize(32, 0);
-            hf_val.resize(32, 0);
+            let key_len = hf_key.len() as u8;
+            let val_len = hf_val.len() as u8;
+            hf_key.resize(128, 0);
+            hf_val.resize(128, 0);
 
             let hf = header_field {
                 key: hf_key.try_into().unwrap(),
+                key_len,
                 val: hf_val.try_into().unwrap(),
+                val_len,
             };
 
             let idx = unsafe { idx.as_bytes() };
@@ -286,10 +290,10 @@ pub struct AttachedParser {
 #[repr(C)]
 #[derive(Default, Clone)]
 pub struct DynamicTableInfo {
-    pub virtual_count: u32,
     pub count: u32,
-    pub current_size_approx: u32,
+    pub size: u32,
     pub max_size: u32,
+    pub deleted: u32,
 }
 
 unsafe impl Plain for DynamicTableInfo {}

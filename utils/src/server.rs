@@ -13,8 +13,8 @@ use tracing::debug;
 async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
     if let Ok(body) = String::from_utf8(body.to_vec()) {
         debug!(
-            "Received request with headers: {:?} and body: {}",
-            headers, body
+            target: "echo",
+            "received request with headers: {:?} and body: {}", headers, body
         );
         Ok((headers, body))
     } else {

@@ -40,6 +40,7 @@ const MAX_ROUTE_PATH: usize = 128;
 const MAX_ROUTE_BODY: usize = 4096;
 
 pub struct Server<'obj> {
+    #[allow(dead_code)]
     skel: ServerSkel<'obj>,
     #[allow(dead_code)]
     sockops: Link,

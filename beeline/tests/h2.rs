@@ -17,16 +17,16 @@ use utils::{
 
 const TEST_HEADER: &str = "testheader";
 
-fn huffman_encode(val: &str) -> Vec<u8> {
-    let mut res = Vec::new();
-    huffman::encode(val.as_bytes(), &mut res).unwrap();
-    res
-}
-
 fn huffman_decode(val: &[u8]) -> String {
     let mut res = Vec::new();
     huffman::decode(val, &mut res, huffman::DecoderSpeed::OneBit).unwrap();
     String::from_utf8(res).unwrap()
+}
+
+fn dynamic_table_size_for_headers(headers: &[(HeaderName, HeaderValue)]) -> u32 {
+    headers.iter().fold(0, |acc, (k, v)| {
+        acc + (k.as_str().len() + v.len() + 32) as u32
+    })
 }
 
 fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
@@ -383,8 +383,9 @@ async fn evict_header_field_from_dynamic_table() {
     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, "user-agent"]);
 
     let testheader = "asdfqwerasdfqwerasdfqwerasdfqwer";
-    let user_agent = "testagenttestagent";
+    let user_agent = "test-agent";
 
+    // this request immediately exceeds the dynamic table limit
     let client = Client::connect(addr, Some(254)).await;
     client
         .get(
@@ -399,39 +400,72 @@ async fn evict_header_field_from_dynamic_table() {
     let info = h2
         .dynamic_table_info(client.local_addr, client.remote_addr)
         .expect("dynamic_table_info");
-    let expected_size =
-        (huffman_encode(TEST_HEADER).len() + huffman_encode(testheader).len()) * 6 + 32;
+
+    let authority = addr.to_string();
+    let expected_dt_size = dynamic_table_size_for_headers(&[
+        (
+            HeaderName::from_static(TEST_HEADER),
+            HeaderValue::from_static(testheader),
+        ),
+        (
+            HeaderName::from_static("authority"),
+            HeaderValue::from_str(&authority.as_str()).unwrap(),
+        ),
+    ]);
     assert_eq!(info.max_size, 254);
-    assert_eq!(info.virtual_count, 2);
-    // assert_eq!(info.current_size_approx, expected_size as u32);
+    assert_eq!(info.count, 2);
+    assert_eq!(info.size, expected_dt_size);
     assert_match_eq(&prog, 0, Some(testheader));
 
-    //     client
-    //         .get(
-    //             format!("http://{}", addr),
-    //             &[(header::USER_AGENT, HeaderValue::from_static(user_agent))],
-    //         )
-    //         .await;
+    client
+        .get(
+            format!("http://{}", addr),
+            &[(header::USER_AGENT, HeaderValue::from_static(user_agent))],
+        )
+        .await;
 
-    //     // it should have evicted other headers, but not yet TEST_HEADER
-    //     let info = h2
-    //         .dynamic_table_info(client.local_addr, client.remote_addr)
-    //         .expect("dynamic_table_info");
-    //     let expected_size =
-    //         (huffman_encode("user-agent").len() + huffman_encode(user_agent).len()) * 6 + 32;
-    //     assert_eq!(info.max_size, 254);
-    //     assert_eq!(info.virtual_count, 2);
-    //     assert_eq!(info.current_size_approx, expected_size as u32);
-    //     assert_match_eq(&prog, 1, Some(user_agent));
+    // this should add the user-agent to the dynamic table, but not evict TEST_HEADER
+    let info = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    let expected_dt_size = dynamic_table_size_for_headers(&[
+        (
+            HeaderName::from_static(TEST_HEADER),
+            HeaderValue::from_static(testheader),
+        ),
+        (
+            HeaderName::from_static("authority"),
+            HeaderValue::from_str(&authority.as_str()).unwrap(),
+        ),
+        (header::USER_AGENT, HeaderValue::from_static(user_agent)),
+    ]);
+    assert_eq!(info.max_size, 254);
+    assert_eq!(info.count, 3);
+    assert_eq!(info.size, expected_dt_size);
+    assert_match_eq(&prog, 1, Some(user_agent));
 
-    // // it should have evicted other headers, but not yet TEST_HEADER
+    client
+        .get(
+            format!("http://{}", addr),
+            &[(header::USER_AGENT, HeaderValue::from_static(testheader))],
+        )
+        .await;
+
+    // this should evict all entries, and add back the authority and user-agent
     // let info = h2
     //     .dynamic_table_info(client.local_addr, client.remote_addr)
     //     .expect("dynamic_table_info");
-    // let expected_size = (huffman_encode("user-agent").len() + huffman_encode(hdr).len()) * 6 + 32;
-    // assert_eq!(info.max_size, 128);
-    // assert_eq!(info.count, 3);
-    // assert_eq!(info.current_size_approx, expected_size as u16);
+    // let expected_dt_size = dynamic_table_size_for_headers(&[
+    //     (header::USER_AGENT, HeaderValue::from_static(testheader)),
+    //     (
+    //         HeaderName::from_static("authority"),
+    //         HeaderValue::from_str(&authority.as_str()).unwrap(),
+    //     ),
+    //     (header::USER_AGENT, HeaderValue::from_static(user_agent)),
+    // ]);
+    // assert_eq!(info.max_size, 254);
+    // assert_eq!(info.count, 1);
+    // assert_eq!(info.size, expected_dt_size);
 
     drop(prog);
     drop(h2);
