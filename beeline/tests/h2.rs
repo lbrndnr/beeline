@@ -15,7 +15,10 @@ use utils::{
     test::{OpenObject, TestProgram},
 };
 
-const TEST_HEADER: &str = "testheader";
+const TEST_HEADER: HeaderName = HeaderName::from_static("testheader");
+const METHOD_HEADER: HeaderName = HeaderName::from_static("method");
+const AUTHORITY_HEADER: HeaderName = HeaderName::from_static("authority");
+const PATH_HEADER: HeaderName = HeaderName::from_static("path");
 
 fn huffman_decode(val: &[u8]) -> String {
     let mut res = Vec::new();
@@ -117,10 +120,10 @@ fn attach_preface_parser(prog_fd: i32) -> (Vec<Link>, Option<Link>, Option<Link>
         .expect("attach parser")
 }
 
-fn attach_h2_parser(prog_fd: i32, hdrs: &[&str]) -> AttachedParser {
+fn attach_h2_parser(prog_fd: i32, hdrs: &[HeaderName]) -> AttachedParser {
     let mut h2 = h2::Parser::new();
     for hdr in hdrs {
-        h2 = h2.capture_http_hdr(hdr).expect("capture {hdr}");
+        h2 = h2.capture_http_hdr(hdr.as_str()).expect("capture {hdr}");
     }
 
     h2.replace_parse_msg("parse_h2")
@@ -137,7 +140,7 @@ async fn parse_header_field_indexed_in_static_table() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &["method"]);
+    let h2 = attach_h2_parser(prog.prog_fd(), &[METHOD_HEADER]);
 
     let client = Client::connect(addr, None).await;
     client.get(format!("http://{}", addr), &[]).await;
@@ -157,7 +160,7 @@ async fn parse_header_field_no_indexing_name_indexed_in_static_table() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &["authorization"]);
+    let h2 = attach_h2_parser(prog.prog_fd(), &[header::AUTHORIZATION]);
 
     let client = Client::connect(addr, None).await;
     let auth = HeaderValue::from_static("Basic YmVlbGluZTpiZWVsaW5l"); // beeline:beeline in base64
@@ -180,7 +183,7 @@ async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &["sensitive"]);
+    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
 
     let secret = "my secret";
     let mut val = HeaderValue::from_static(secret);
@@ -188,10 +191,7 @@ async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
 
     let client = Client::connect(addr, None).await;
     client
-        .get(
-            format!("http://{}", addr),
-            &[(header::HeaderName::from_static("sensitive"), val)],
-        )
+        .get(format!("http://{}", addr), &[(TEST_HEADER, val)])
         .await;
 
     assert_match_eq(&prog, 0, Some(secret));
@@ -217,10 +217,7 @@ async fn parse_header_field_never_indexing_new_name() {
 
     let client = Client::connect(addr, None).await;
     client
-        .get(
-            format!("http://{}", addr),
-            &[(header::HeaderName::from_static(TEST_HEADER), val)],
-        )
+        .get(format!("http://{}", addr), &[(TEST_HEADER, val)])
         .await;
 
     assert_match_eq(&prog, 0, Some(secret));
@@ -238,7 +235,7 @@ async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() 
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &["user-agent", "path"]);
+    let h2 = attach_h2_parser(prog.prog_fd(), &[header::USER_AGENT, PATH_HEADER]);
 
     let client = Client::connect(addr, None).await;
     let user_agent = "beeline";
@@ -271,7 +268,7 @@ async fn parse_header_field_incremental_indexing_new_name() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, "path"]);
+    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, PATH_HEADER]);
 
     let client = Client::connect(addr, None).await;
     let hdr = "beeline";
@@ -280,10 +277,7 @@ async fn parse_header_field_incremental_indexing_new_name() {
     client
         .get(
             format!("http://{}{}", addr, path),
-            &[(
-                HeaderName::from_static(TEST_HEADER),
-                HeaderValue::from_static(hdr),
-            )],
+            &[(TEST_HEADER, HeaderValue::from_static(hdr))],
         )
         .await;
     assert_match_eq(&prog, 0, Some(hdr));
@@ -302,7 +296,10 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &["user-agent", "accept-language"]);
+    let h2 = attach_h2_parser(
+        prog.prog_fd(),
+        &[header::USER_AGENT, header::ACCEPT_LANGUAGE],
+    );
 
     let client = Client::connect(addr, None).await;
     let user_agent = "beeline";
@@ -380,7 +377,7 @@ async fn evict_header_field_from_dynamic_table() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach program");
 
     let h1 = attach_preface_parser(prog.prog_fd());
-    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, "user-agent"]);
+    let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, header::USER_AGENT]);
 
     let testheader = "asdfqwerasdfqwerasdfqwerasdfqwer";
     let user_agent = "test-agent";
@@ -390,10 +387,7 @@ async fn evict_header_field_from_dynamic_table() {
     client
         .get(
             format!("http://{}", addr),
-            &[(
-                HeaderName::from_static(TEST_HEADER),
-                HeaderValue::from_static(testheader),
-            )],
+            &[(TEST_HEADER, HeaderValue::from_static(testheader))],
         )
         .await;
 
@@ -402,19 +396,16 @@ async fn evict_header_field_from_dynamic_table() {
         .expect("dynamic_table_info");
 
     let authority = addr.to_string();
-    let expected_dt_size = dynamic_table_size_for_headers(&[
+    let expected_dt = &[
+        (TEST_HEADER, HeaderValue::from_static(testheader)),
         (
-            HeaderName::from_static(TEST_HEADER),
-            HeaderValue::from_static(testheader),
-        ),
-        (
-            HeaderName::from_static("authority"),
+            AUTHORITY_HEADER,
             HeaderValue::from_str(&authority.as_str()).unwrap(),
         ),
-    ]);
+    ];
     assert_eq!(info.max_size, 254);
-    assert_eq!(info.count, 2);
-    assert_eq!(info.size, expected_dt_size);
+    assert_eq!(info.count, expected_dt.len() as u32);
+    assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
     assert_match_eq(&prog, 0, Some(testheader));
 
     client
@@ -428,20 +419,17 @@ async fn evict_header_field_from_dynamic_table() {
     let info = h2
         .dynamic_table_info(client.local_addr, client.remote_addr)
         .expect("dynamic_table_info");
-    let expected_dt_size = dynamic_table_size_for_headers(&[
+    let expected_dt = &[
+        (TEST_HEADER, HeaderValue::from_static(testheader)),
         (
-            HeaderName::from_static(TEST_HEADER),
-            HeaderValue::from_static(testheader),
-        ),
-        (
-            HeaderName::from_static("authority"),
+            AUTHORITY_HEADER,
             HeaderValue::from_str(&authority.as_str()).unwrap(),
         ),
         (header::USER_AGENT, HeaderValue::from_static(user_agent)),
-    ]);
+    ];
     assert_eq!(info.max_size, 254);
-    assert_eq!(info.count, 3);
-    assert_eq!(info.size, expected_dt_size);
+    assert_eq!(info.count, expected_dt.len() as u32);
+    assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
     assert_match_eq(&prog, 1, Some(user_agent));
 
     client
@@ -458,7 +446,7 @@ async fn evict_header_field_from_dynamic_table() {
     // let expected_dt_size = dynamic_table_size_for_headers(&[
     //     (header::USER_AGENT, HeaderValue::from_static(testheader)),
     //     (
-    //         HeaderName::from_static("authority"),
+    //         AUTHORITY_HEADER,
     //         HeaderValue::from_str(&authority.as_str()).unwrap(),
     //     ),
     //     (header::USER_AGENT, HeaderValue::from_static(user_agent)),
