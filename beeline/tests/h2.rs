@@ -439,21 +439,15 @@ async fn evict_header_field_from_dynamic_table() {
         )
         .await;
 
-    // this should evict all entries, and add back the authority and user-agent
-    // let info = h2
-    //     .dynamic_table_info(client.local_addr, client.remote_addr)
-    //     .expect("dynamic_table_info");
-    // let expected_dt_size = dynamic_table_size_for_headers(&[
-    //     (header::USER_AGENT, HeaderValue::from_static(testheader)),
-    //     (
-    //         AUTHORITY_HEADER,
-    //         HeaderValue::from_str(&authority.as_str()).unwrap(),
-    //     ),
-    //     (header::USER_AGENT, HeaderValue::from_static(user_agent)),
-    // ]);
-    // assert_eq!(info.max_size, 254);
-    // assert_eq!(info.count, 1);
-    // assert_eq!(info.size, expected_dt_size);
+    // this should evict all entries, and add back the user-agent
+    let info = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    let expected_dt = &[(header::USER_AGENT, HeaderValue::from_static(testheader))];
+    assert_eq!(info.max_size, 254);
+    assert_eq!(info.count, expected_dt.len() as u32);
+    assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
+    assert_match_eq(&prog, 1, Some(testheader));
 
     drop(prog);
     drop(h2);

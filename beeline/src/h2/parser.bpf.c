@@ -297,7 +297,7 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
 }
 
 static __always_inline void _get_lru_dynamic_table_entry(const struct ip4_conn *conn __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, struct dynamic_table_entry **entry) {
-    u32 end_idx = STATIC_TABLE_SIZE + dt_info->count + dt_info->deleted - 1;
+    u32 end_idx = STATIC_TABLE_SIZE + dt_info->deleted;
     bpf_trace("dt: getting LRU entry at index %d", end_idx);
     struct dynamic_table_key key = _new_dynamic_table_key(conn, end_idx);
     *entry = bpf_map_lookup_elem(&dynamic_table, &key);
