@@ -32,7 +32,7 @@ fn dynamic_table_size_for_headers(headers: &[(HeaderName, HeaderValue)]) -> u32 
     })
 }
 
-fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
+fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&HeaderValue>) {
     let actual_hf = prog.get_match(idx).expect("get_match");
     let actual = actual_hf.map(|val| huffman_decode(&val));
 
@@ -43,7 +43,7 @@ fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&str>) {
             actual.unwrap()
         );
     } else {
-        let expected = expected.unwrap();
+        let expected = expected.unwrap().to_str().unwrap();
         assert!(
             actual.is_some(),
             "get_match({idx}): none, expected: {expected}"
@@ -145,7 +145,8 @@ async fn parse_header_field_indexed_in_static_table() {
     let client = Client::connect(addr, None).await;
     client.get(format!("http://{}", addr), &[]).await;
 
-    assert_match_eq(&prog, 0, Some("GET"));
+    let method_val = HeaderValue::from_static("GET");
+    assert_match_eq(&prog, 0, Some(&method_val));
 
     drop(prog);
     drop(h2);
@@ -162,13 +163,17 @@ async fn parse_header_field_no_indexing_name_indexed_in_static_table() {
     let h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[header::AUTHORIZATION]);
 
+    let auth_val = HeaderValue::from_static("Basic YmVlbGluZTpiZWVsaW5l"); // beeline:beeline in base64
+
     let client = Client::connect(addr, None).await;
-    let auth = HeaderValue::from_static("Basic YmVlbGluZTpiZWVsaW5l"); // beeline:beeline in base64
     client
-        .get(format!("http://{}", addr), &[(header::AUTHORIZATION, auth)])
+        .get(
+            format!("http://{}", addr),
+            &[(header::AUTHORIZATION, auth_val.clone())],
+        )
         .await;
 
-    assert_match_eq(&prog, 0, Some("Basic YmVlbGluZTpiZWVsaW5l"));
+    assert_match_eq(&prog, 0, Some(&auth_val));
 
     drop(prog);
     drop(h2);
@@ -185,16 +190,18 @@ async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
     let h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
 
-    let secret = "my secret";
-    let mut val = HeaderValue::from_static(secret);
-    val.set_sensitive(true);
+    let mut test_header_val = HeaderValue::from_static("my secret");
+    test_header_val.set_sensitive(true);
 
     let client = Client::connect(addr, None).await;
     client
-        .get(format!("http://{}", addr), &[(TEST_HEADER, val)])
+        .get(
+            format!("http://{}", addr),
+            &[(TEST_HEADER, test_header_val.clone())],
+        )
         .await;
 
-    assert_match_eq(&prog, 0, Some(secret));
+    assert_match_eq(&prog, 0, Some(&test_header_val));
 
     drop(prog);
     drop(h2);
@@ -211,16 +218,18 @@ async fn parse_header_field_never_indexing_new_name() {
     let h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
 
-    let secret = "my secret";
-    let mut val = HeaderValue::from_static(secret);
-    val.set_sensitive(true);
+    let mut test_header_val = HeaderValue::from_static("my secret");
+    test_header_val.set_sensitive(true);
 
     let client = Client::connect(addr, None).await;
     client
-        .get(format!("http://{}", addr), &[(TEST_HEADER, val)])
+        .get(
+            format!("http://{}", addr),
+            &[(TEST_HEADER, test_header_val.clone())],
+        )
         .await;
 
-    assert_match_eq(&prog, 0, Some(secret));
+    assert_match_eq(&prog, 0, Some(&test_header_val));
 
     drop(prog);
     drop(h2);
@@ -237,18 +246,19 @@ async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() 
     let h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[header::USER_AGENT, PATH_HEADER]);
 
-    let client = Client::connect(addr, None).await;
-    let user_agent = "beeline";
+    let user_agent_val = HeaderValue::from_static("beeline");
     let path = "/bee/1234";
+    let path_val = HeaderValue::from_static(path);
 
+    let client = Client::connect(addr, None).await;
     client
         .get(
             format!("http://{}{}", addr, path),
-            &[(header::USER_AGENT, HeaderValue::from_static(user_agent))],
+            &[(header::USER_AGENT, user_agent_val.clone())],
         )
         .await;
-    assert_match_eq(&prog, 0, Some(user_agent));
-    assert_match_eq(&prog, 1, Some(path));
+    assert_match_eq(&prog, 0, Some(&user_agent_val));
+    assert_match_eq(&prog, 1, Some(&path_val));
 
     drop(prog);
     drop(h2);
@@ -270,18 +280,19 @@ async fn parse_header_field_incremental_indexing_new_name() {
     let h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, PATH_HEADER]);
 
-    let client = Client::connect(addr, None).await;
-    let hdr = "beeline";
+    let test_header_val = HeaderValue::from_static("beeline");
     let path = "/bee/1234";
+    let path_val = HeaderValue::from_static(&path);
 
+    let client = Client::connect(addr, None).await;
     client
         .get(
             format!("http://{}{}", addr, path),
-            &[(TEST_HEADER, HeaderValue::from_static(hdr))],
+            &[(TEST_HEADER, test_header_val.clone())],
         )
         .await;
-    assert_match_eq(&prog, 0, Some(hdr));
-    assert_match_eq(&prog, 1, Some(path));
+    assert_match_eq(&prog, 0, Some(&test_header_val));
+    assert_match_eq(&prog, 1, Some(&path_val));
 
     drop(prog);
     drop(h2);
@@ -301,20 +312,21 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
         &[header::USER_AGENT, header::ACCEPT_LANGUAGE],
     );
 
+    let user_agent_val = HeaderValue::from_static("beeline");
+    let lang_val = HeaderValue::from_static("sumsum");
+
     let client = Client::connect(addr, None).await;
-    let user_agent = "beeline";
-    let lang = "sumsum";
     client
         .get(
             format!("http://{}", addr),
             &[
-                (header::USER_AGENT, HeaderValue::from_static(user_agent)),
-                (header::ACCEPT_LANGUAGE, HeaderValue::from_static(lang)),
+                (header::USER_AGENT, user_agent_val.clone()),
+                (header::ACCEPT_LANGUAGE, lang_val.clone()),
             ],
         )
         .await;
-    assert_match_eq(&prog, 0, Some(user_agent));
-    assert_match_eq(&prog, 1, Some(lang));
+    assert_match_eq(&prog, 0, Some(&user_agent_val));
+    assert_match_eq(&prog, 1, Some(&lang_val));
 
     // repeat the request with other headers
     // this will check if it indexes the dynamic table correctly
@@ -332,13 +344,13 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
         .get(
             format!("http://{}", addr),
             &[
-                (header::ACCEPT_LANGUAGE, HeaderValue::from_static(lang)),
-                (header::USER_AGENT, HeaderValue::from_static(user_agent)),
+                (header::ACCEPT_LANGUAGE, lang_val.clone()),
+                (header::USER_AGENT, user_agent_val.clone()),
             ],
         )
         .await;
-    assert_match_eq(&prog, 0, Some(user_agent));
-    assert_match_eq(&prog, 1, Some(lang));
+    assert_match_eq(&prog, 0, Some(&user_agent_val));
+    assert_match_eq(&prog, 1, Some(&lang_val));
 
     drop(prog);
     drop(h2);
@@ -379,15 +391,15 @@ async fn evict_header_field_from_dynamic_table() {
     let h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, header::USER_AGENT]);
 
-    let testheader = "asdfqwerasdfqwerasdfqwerasdfqwer";
-    let user_agent = "test-agent";
+    let test_header_val = HeaderValue::from_static("asdfqwerasdfqwerasdfqwerasdfqwer");
+    let user_agent_val = HeaderValue::from_static("test-agent");
 
     // this request immediately exceeds the dynamic table limit
     let client = Client::connect(addr, Some(254)).await;
     client
         .get(
             format!("http://{}", addr),
-            &[(TEST_HEADER, HeaderValue::from_static(testheader))],
+            &[(TEST_HEADER, test_header_val.clone())],
         )
         .await;
 
@@ -397,7 +409,7 @@ async fn evict_header_field_from_dynamic_table() {
 
     let authority = addr.to_string();
     let expected_dt = &[
-        (TEST_HEADER, HeaderValue::from_static(testheader)),
+        (TEST_HEADER, test_header_val.clone()),
         (
             AUTHORITY_HEADER,
             HeaderValue::from_str(&authority.as_str()).unwrap(),
@@ -406,12 +418,12 @@ async fn evict_header_field_from_dynamic_table() {
     assert_eq!(info.max_size, 254);
     assert_eq!(info.count, expected_dt.len() as u32);
     assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
-    assert_match_eq(&prog, 0, Some(testheader));
+    assert_match_eq(&prog, 0, Some(&test_header_val));
 
     client
         .get(
             format!("http://{}", addr),
-            &[(header::USER_AGENT, HeaderValue::from_static(user_agent))],
+            &[(header::USER_AGENT, user_agent_val.clone())],
         )
         .await;
 
@@ -420,22 +432,22 @@ async fn evict_header_field_from_dynamic_table() {
         .dynamic_table_info(client.local_addr, client.remote_addr)
         .expect("dynamic_table_info");
     let expected_dt = &[
-        (TEST_HEADER, HeaderValue::from_static(testheader)),
+        (TEST_HEADER, test_header_val.clone()),
         (
             AUTHORITY_HEADER,
             HeaderValue::from_str(&authority.as_str()).unwrap(),
         ),
-        (header::USER_AGENT, HeaderValue::from_static(user_agent)),
+        (header::USER_AGENT, user_agent_val.clone()),
     ];
     assert_eq!(info.max_size, 254);
     assert_eq!(info.count, expected_dt.len() as u32);
     assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
-    assert_match_eq(&prog, 1, Some(user_agent));
+    assert_match_eq(&prog, 1, Some(&user_agent_val));
 
     client
         .get(
             format!("http://{}", addr),
-            &[(header::USER_AGENT, HeaderValue::from_static(testheader))],
+            &[(header::USER_AGENT, test_header_val.clone())],
         )
         .await;
 
@@ -443,11 +455,11 @@ async fn evict_header_field_from_dynamic_table() {
     let info = h2
         .dynamic_table_info(client.local_addr, client.remote_addr)
         .expect("dynamic_table_info");
-    let expected_dt = &[(header::USER_AGENT, HeaderValue::from_static(testheader))];
+    let expected_dt = &[(header::USER_AGENT, test_header_val.clone())];
     assert_eq!(info.max_size, 254);
     assert_eq!(info.count, expected_dt.len() as u32);
     assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
-    assert_match_eq(&prog, 1, Some(testheader));
+    assert_match_eq(&prog, 1, Some(&test_header_val));
 
     drop(prog);
     drop(h2);
