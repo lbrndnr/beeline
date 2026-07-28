@@ -43,7 +43,7 @@ __noinline bool matched_h1(const struct sk_msg_md *msg, const struct parse_res *
 }
 
 __noinline int extract_h1_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
-    int ret = -1;
+    int ret = 0;
 
 	__sink(msg);
 	__sink(pres);
@@ -55,7 +55,7 @@ __noinline int extract_h1_match(const struct sk_msg_md *msg, const struct parse_
 }
 
 __noinline int parse_h1(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
-   	int ret = -1;
+   	int ret = 0;
 
 	__sink(msg);
 	__sink(pres);
@@ -67,7 +67,7 @@ __noinline int parse_h1(struct sk_msg_md *msg, struct parse_res *pres __arg_nonn
 }
 
 __noinline int extract_h2_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
-    int ret = -1;
+    int ret = 0;
 
 	__sink(msg);
 	__sink(pres);
@@ -79,7 +79,7 @@ __noinline int extract_h2_match(const struct sk_msg_md *msg, const struct parse_
 }
 
 __noinline int parse_h2(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
-    int ret = -1;
+    int ret = 0;
 
 	__sink(msg);
 	__sink(pres);
