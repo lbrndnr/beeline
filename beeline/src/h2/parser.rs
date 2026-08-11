@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{Result, bail};
 use as_bytes::AsBytes;
 use httlib_huffman as huffman;
+use http::HeaderName;
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, Skel, SkelBuilder},
@@ -110,18 +111,18 @@ impl Parser {
     ///
     /// # Arguments
     ///
-    /// * `key` - The HTTP/2 header name to capture
+    /// * `name` - The HTTP/2 header name to capture
     ///
     /// # Errors
     ///
     /// Returns an error if the pattern configuration fails.
-    pub fn capture_http_hdr(mut self, key: &str) -> Result<Parser> {
-        let mut key_encoded = Vec::new();
-        huffman::encode(key.as_bytes(), &mut key_encoded)?;
+    pub fn capture_hdr(mut self, name: &HeaderName) -> Result<Parser> {
+        let mut name_encoded = Vec::new();
+        huffman::encode(name.as_str().as_bytes(), &mut name_encoded)?;
 
         self.dfa
             .start_pattern(self.s_any)
-            .push(&key_encoded)?
+            .push(&name_encoded)?
             .capture_field_value();
 
         Ok(self)

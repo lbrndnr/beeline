@@ -1,5 +1,6 @@
 mod dfa;
 mod parser;
+pub use parser::AttachedParser;
 pub use parser::Parser;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

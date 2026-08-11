@@ -1,5 +1,6 @@
-use beeline::h1::Parser;
-use reqwest::{Client, header};
+use beeline::h1;
+use http::{HeaderName, header};
+use reqwest::Client;
 use utils::{
     server,
     test::{OpenObject, TestProgram},
@@ -16,6 +17,22 @@ fn build_client() -> Client {
     Client::builder().build().expect("client")
 }
 
+fn attach_h1_parser(prog_fd: i32, match_preface: bool, hdrs: &[HeaderName]) -> h1::AttachedParser {
+    let mut h1 = h1::Parser::new();
+    if match_preface {
+        h1 = h1.match_h2_preface().expect("match preface");
+    }
+    for hdr in hdrs {
+        h1 = h1.capture_hdr(hdr).expect("capture {hdr}");
+    }
+
+    h1.replace_parse_msg("parse_h1")
+        .replace_matched("matched_h1")
+        .replace_extract("extract_h1_match")
+        .attach(prog_fd)
+        .expect("attach parser")
+}
+
 #[tokio::test]
 async fn match_h2_preface() {
     let addr = server::launch().await.expect("launch server");
@@ -23,15 +40,7 @@ async fn match_h2_preface() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-    let _h1 = Parser::new()
-        .match_preface()
-        .expect("match preface")
-        .replace_parse_msg("parse_h1")
-        .replace_matched("matched_h1")
-        .replace_extract("extract_h1_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
-
+    let _h1 = attach_h1_parser(prog.prog_fd(), true, &[]);
     let client = Client::builder()
         .http2_prior_knowledge()
         .build()
@@ -52,17 +61,7 @@ async fn parse_simple_header() {
 
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
-
-    let _h1 = Parser::new()
-        .match_preface()
-        .expect("match preface")
-        .match_http_hdr("user-agent")
-        .expect("match user-agent")
-        .replace_parse_msg("parse_h1")
-        .replace_matched("matched_h1")
-        .replace_extract("extract_h1_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let _h1 = attach_h1_parser(prog.prog_fd(), true, &[header::USER_AGENT]);
 
     let client = build_client();
     let user_agent = "beeline";
@@ -148,18 +147,11 @@ async fn parse_subsequent_headers() {
     let mut open_obj = OpenObject::new();
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-    let _h1 = Parser::new()
-        .match_preface()
-        .expect("match preface")
-        .match_http_hdr("user-agent")
-        .expect("match user-agent")
-        .match_http_hdr("accept-language")
-        .expect("match accept-language")
-        .replace_parse_msg("parse_h1")
-        .replace_matched("matched_h1")
-        .replace_extract("extract_h1_match")
-        .attach(prog.prog_fd())
-        .expect("attach parser");
+    let _h1 = attach_h1_parser(
+        prog.prog_fd(),
+        true,
+        &[header::USER_AGENT, header::ACCEPT_LANGUAGE],
+    );
 
     let client = build_client();
     let user_agent = "beeline";

@@ -1,14 +1,10 @@
 use std::net::SocketAddr;
 
 use ::h2::{RecvStream, client};
-use beeline::{
-    h1,
-    h2::{self, AttachedParser},
-};
+use beeline::{h1, h2};
 use bytes::Bytes;
 use httlib_huffman as huffman;
 use http::{HeaderName, HeaderValue, Request, Response, header};
-use libbpf_rs::Link;
 use tokio::net::TcpStream;
 use utils::{
     server,
@@ -109,9 +105,9 @@ impl Client {
     }
 }
 
-fn attach_preface_parser(prog_fd: i32) -> (Vec<Link>, Option<Link>, Option<Link>) {
+fn attach_preface_parser(prog_fd: i32) -> h1::AttachedParser {
     h1::Parser::new()
-        .match_preface()
+        .match_h2_preface()
         .expect("match preface")
         .replace_parse_msg("parse_h1")
         .replace_matched("matched_h1")
@@ -120,10 +116,10 @@ fn attach_preface_parser(prog_fd: i32) -> (Vec<Link>, Option<Link>, Option<Link>
         .expect("attach parser")
 }
 
-fn attach_h2_parser(prog_fd: i32, hdrs: &[HeaderName]) -> AttachedParser {
+fn attach_h2_parser(prog_fd: i32, hdrs: &[HeaderName]) -> h2::AttachedParser {
     let mut h2 = h2::Parser::new();
     for hdr in hdrs {
-        h2 = h2.capture_http_hdr(hdr.as_str()).expect("capture {hdr}");
+        h2 = h2.capture_hdr(hdr).expect("capture {hdr}");
     }
 
     h2.replace_parse_msg("parse_h2")

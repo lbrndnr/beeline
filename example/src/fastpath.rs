@@ -45,11 +45,7 @@ pub struct Server<'obj> {
     #[allow(dead_code)]
     sockops: Link,
     #[allow(dead_code)]
-    h1_parse: Vec<Link>,
-    #[allow(dead_code)]
-    h1_matched: Option<Link>,
-    #[allow(dead_code)]
-    h1_extract: Option<Link>,
+    attached_parser: h1::AttachedParser,
 }
 
 unsafe impl<'obj> Send for Server<'obj> {}
@@ -125,34 +121,32 @@ impl<'obj> Server<'obj> {
         open_skel.maps.rodata_data.as_mut().unwrap().ip4 = ip4;
         open_skel.maps.rodata_data.as_mut().unwrap().port = address.port() as u32;
 
-        {
-            let bss = open_skel.maps.bss_data.as_mut().unwrap();
-            bss.num_routes = routes.len() as u32;
+        let bss = open_skel.maps.bss_data.as_mut().unwrap();
+        bss.num_routes = routes.len() as u32;
 
-            for (i, (path, file)) in routes.iter().enumerate() {
-                if path.len() > MAX_ROUTE_PATH {
-                    bail!("fastpath route path `{path}` is longer than {MAX_ROUTE_PATH} bytes");
-                }
-
-                let body = render_response(file)?;
-                if body.len() > MAX_ROUTE_BODY {
-                    bail!("fastpath response for `{path}` is longer than {MAX_ROUTE_BODY} bytes");
-                }
-
-                let route = &mut bss.routes[i];
-                route.path[..path.len()].copy_from_slice(path.as_bytes());
-                route.path_len = path.len() as u32;
-                route.body[..body.len()].copy_from_slice(&body);
-                route.body_len = body.len() as u32;
+        for (i, (path, file)) in routes.iter().enumerate() {
+            if path.len() > MAX_ROUTE_PATH {
+                bail!("fastpath route path `{path}` is longer than {MAX_ROUTE_PATH} bytes");
             }
+
+            let body = render_response(file)?;
+            if body.len() > MAX_ROUTE_BODY {
+                bail!("fastpath response for `{path}` is longer than {MAX_ROUTE_BODY} bytes");
+            }
+
+            let route = &mut bss.routes[i];
+            route.path[..path.len()].copy_from_slice(path.as_bytes());
+            route.path_len = path.len() as u32;
+            route.body[..body.len()].copy_from_slice(&body);
+            route.body_len = body.len() as u32;
         }
 
         let skel = open_skel.load()?;
         let sock_map_fd = skel.maps.sock_map.as_fd().as_raw_fd();
 
-        let (h1_parse, h1_matched, h1_extract) = h1::Parser::new()
-            .match_http_req_status_line()?
-            .match_http_hdr("content-length")?
+        let attached_parser = h1::Parser::new()
+            .capture_hdr(&beeline::header::PATH)?
+            .capture_hdr(&beeline::header::CONTENT_LENGTH)?
             .replace_parse_msg("parse_h1")
             .replace_extract("extract_h1_match")
             .attach(skel.progs.msg_verdict.as_fd().as_raw_fd())?;
@@ -176,9 +170,7 @@ impl<'obj> Server<'obj> {
         Ok(Self {
             sockops,
             skel,
-            h1_parse,
-            h1_matched,
-            h1_extract,
+            attached_parser,
         })
     }
 }

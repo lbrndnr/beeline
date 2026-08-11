@@ -10,6 +10,13 @@ pub mod h1;
 #[cfg(feature = "h2")]
 pub mod h2;
 
+pub mod header {
+    pub const CONTENT_LENGTH: http::HeaderName = http::HeaderName::from_static("content-length");
+    pub const METHOD: http::HeaderName = http::HeaderName::from_static("method");
+    pub const PATH: http::HeaderName = http::HeaderName::from_static("path");
+    pub const STATUS: http::HeaderName = http::HeaderName::from_static("status");
+}
+
 impl From<SocketAddr> for h2::ip4_addr {
     fn from(addr: SocketAddr) -> Self {
         match addr {

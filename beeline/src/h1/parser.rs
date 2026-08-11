@@ -2,8 +2,10 @@
 use crate::{
     autoload_and_attach,
     h1::{Action, dfa::Dfa},
+    header::{METHOD, PATH, STATUS},
 };
 use anyhow::{Result, bail};
+use http::HeaderName;
 use libbpf_rs::{
     Link, MapCore, OpenObject, PrintLevel, set_print,
     skel::{OpenSkel, Skel, SkelBuilder},
@@ -106,6 +108,38 @@ impl Parser {
         self
     }
 
+    /// Configures the parser to capture an HTTP/2 header field value.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The HTTP/2 header name to capture
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pattern configuration fails.
+    pub fn capture_hdr(mut self, name: &HeaderName) -> Result<Parser> {
+        if name == &METHOD || name == &PATH {
+            return self.capture_status_line_hdr(name);
+        } else if name == &STATUS {
+            return self.capture_status_code();
+        }
+
+        self.dfa
+            .start_pattern(self.s_any)
+            .push(CRLF)?
+            .push(name.as_str())?
+            .push_optional('\t')?
+            .push_optional(' ')?
+            .push(":")?
+            .push_optional('\t')?
+            .push_optional(' ')?
+            .start_capturing()
+            .push_optional('*')?
+            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+
+        Ok(self)
+    }
+
     /// Configures the parser to match an HTTP/2 preface in an HTTP/1.1 connection.
     ///
     /// This method sets up pattern matching for the HTTP/2 connection preface
@@ -114,7 +148,7 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if the pattern configuration fails.
-    pub fn match_preface(mut self) -> Result<Parser> {
+    pub fn match_h2_preface(mut self) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_init)
             .start_capturing()
@@ -128,7 +162,7 @@ impl Parser {
         Ok(self)
     }
 
-    fn done_on_http_hdr_end(mut self) -> Result<Parser> {
+    fn done_on_hdr_end(mut self) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_any)
             .push(CRLF)?
@@ -138,14 +172,31 @@ impl Parser {
     }
 
     /// Configures the parser to match and capture HTTP request status line components.
-    ///
-    /// This method captures the HTTP method and request URI from the request status line.
-    /// It expects the format: `METHOD URI HTTP/1.1\r\n`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the pattern configuration fails.
-    pub fn match_http_req_status_line(mut self) -> Result<Parser> {
+    fn capture_status_line_hdr(mut self, name: &HeaderName) -> Result<Parser> {
+        if name == &METHOD {
+            self.dfa
+                .start_pattern(self.s_init)
+                .start_capturing()
+                .push_optional('*')?
+                .end_capturing(" ")?
+                .push_optional('*')?
+                .push(" HTTP/1.1")?;
+        } else if name == &STATUS {
+            self.dfa
+                .start_pattern(self.s_init)
+                .push_optional('*')?
+                .push(" ")?
+                .start_capturing()
+                .push_optional('*')?
+                .push(" HTTP/1.1")?
+                .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+        }
+
+        Ok(self)
+    }
+
+    /// Configures the parser to match and capture HTTP response status code.
+    fn capture_status_code(mut self) -> Result<Parser> {
         self.dfa
             .start_pattern(self.s_init)
             .start_capturing()
@@ -167,42 +218,16 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if the pattern configuration fails.
-    pub fn match_http_status_code(mut self) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_init)
-            .push("HTTP/1.1 ")?
-            .start_capturing()
-            .push_optional('*')?
-            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+    // pub fn capture_status_code(mut self) -> Result<Parser> {
+    //     self.dfa
+    //         .start_pattern(self.s_init)
+    //         .push("HTTP/1.1 ")?
+    //         .start_capturing()
+    //         .push_optional('*')?
+    //         .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
-        Ok(self)
-    }
-
-    /// Configures the parser to match and capture a specific HTTP header value.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The HTTP header name to match (case-insensitive)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the pattern configuration fails.
-    pub fn match_http_hdr(mut self, key: &str) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_any)
-            .push(CRLF)?
-            .push(key)?
-            .push_optional('\t')?
-            .push_optional(' ')?
-            .push(":")?
-            .push_optional('\t')?
-            .push_optional(' ')?
-            .start_capturing()
-            .push_optional('*')?
-            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
-
-        Ok(self)
-    }
+    //     Ok(self)
+    // }
 
     /// Returns an iterator over all states in the parser's DFA.
     ///
@@ -239,10 +264,10 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if attachment to the target program fails.
-    pub fn attach<'obj>(self, target: i32) -> Result<(Vec<Link>, Option<Link>, Option<Link>)> {
+    pub fn attach<'obj>(self, target: i32) -> Result<AttachedParser> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
-        let parser = self.done_on_http_hdr_end()?;
+        let parser = self.done_on_hdr_end()?;
 
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
@@ -273,31 +298,28 @@ impl Parser {
         let skel = open_skel.load()?;
         bpf_tracing::try_init(skel.object())?;
 
-        let mut parse = Vec::new();
+        let mut links = Vec::new();
         if parser.parse_msg_fn.is_some() {
-            parse.push(skel.progs.parse_msg.attach()?);
+            links.push(skel.progs.parse_msg.attach()?);
         }
         if parser.parse_skb_fn.is_some() {
-            parse.push(skel.progs.parse_skb.attach()?);
+            links.push(skel.progs.parse_skb.attach()?);
         }
         if parser.parse_buf_fn.is_some() {
-            parse.push(skel.progs.parse_buf.attach()?);
+            links.push(skel.progs.parse_buf.attach()?);
         }
 
-        let matched = if parser.matched_fn.is_some() {
-            Some(skel.progs.matched.attach()?)
-        } else {
-            None
-        };
-        let extract = if parser.extract_fn.is_some() {
-            Some(skel.progs.extract_match.attach()?)
-        } else {
-            None
-        };
+        if parser.matched_fn.is_some() {
+            links.push(skel.progs.matched.attach()?);
+        }
+
+        if parser.extract_fn.is_some() {
+            links.push(skel.progs.extract_match.attach()?);
+        }
 
         debug!("Beeline http/1 attached");
 
-        anyhow::Ok((parse, matched, extract))
+        anyhow::Ok(AttachedParser { links })
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
@@ -310,4 +332,9 @@ impl Parser {
 
         Ok(())
     }
+}
+
+pub struct AttachedParser {
+    #[allow(dead_code)]
+    links: Vec<Link>,
 }
