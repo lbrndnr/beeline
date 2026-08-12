@@ -119,7 +119,7 @@ fn attach_preface_parser(prog_fd: i32) -> h1::AttachedParser {
 fn attach_h2_parser(prog_fd: i32, hdrs: &[HeaderName]) -> h2::AttachedParser {
     let mut h2 = h2::Parser::new();
     for hdr in hdrs {
-        h2 = h2.capture_hdr(hdr).expect("capture {hdr}");
+        h2 = h2.capture_hdr(hdr).expect(&format!("capture {:?}", hdr));
     }
 
     h2.replace_parse_msg("parse_h2")

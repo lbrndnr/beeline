@@ -61,12 +61,15 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
             continue;
         }
 
+        u16 old_state = *s;
         u16 a = 0;
         _next(*s, c, s, &a);
 
         if (*s == s_any) {
             _next(s_any, c, s, &a);
         }
+
+        bpf_trace("data[%d]=%d (%d -> %d)",i, c, old_state, *s);
 
         // it should never happen that any of these cases are true simultaneously
         // but it makes the verifier happy when we don't use else if here

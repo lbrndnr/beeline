@@ -1,5 +1,8 @@
 mod dfa;
 mod parser;
+use anyhow::{Result, bail};
+use std::mem::discriminant;
+
 pub use parser::AttachedParser;
 pub use parser::Parser;
 
@@ -15,17 +18,32 @@ pub enum Action {
 
     /// Terminates parsing
     Done,
-
-    // No action
-    None,
 }
 
-impl Action {
-    pub fn is_some(&self) -> bool {
-        !self.is_none()
-    }
+trait Actions: Sized {
+    /// Tries to push an action. Fails if the resulting vector
+    /// contains conflicting actions.
+    fn try_push(&mut self, action: Action) -> Result<()>;
+}
 
-    pub fn is_none(&self) -> bool {
-        matches!(self, Action::None)
+impl Actions for Vec<Action> {
+    fn try_push(&mut self, action: Action) -> Result<()> {
+        if self.contains(&Action::Done) || action == Action::Done {
+            self.clear();
+            self.push(action);
+            return Ok(());
+        }
+
+        for a in self.iter() {
+            if discriminant(a) == discriminant(&action) && a != &action {
+                bail!(
+                    "conflicting actions: duplicate {:?} action with different payload",
+                    action
+                );
+            }
+        }
+
+        self.push(action);
+        Ok(())
     }
 }

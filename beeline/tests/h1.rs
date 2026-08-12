@@ -23,7 +23,7 @@ fn attach_h1_parser(prog_fd: i32, match_preface: bool, hdrs: &[HeaderName]) -> h
         h1 = h1.match_h2_preface().expect("match preface");
     }
     for hdr in hdrs {
-        h1 = h1.capture_hdr(hdr).expect("capture {hdr}");
+        h1 = h1.capture_hdr(hdr).expect(&format!("capture {:?}", hdr));
     }
 
     h1.replace_parse_msg("parse_h1")
@@ -168,3 +168,53 @@ async fn parse_subsequent_headers() {
     assert_match_eq(&prog, 1, user_agent);
     assert_match_eq(&prog, 2, lang);
 }
+
+// #[tokio::test]
+// async fn parse_status_line_only() {
+//     let addr = server::launch().await.expect("launch server");
+
+//     let mut open_obj = OpenObject::new();
+//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+
+//     let _h1 = attach_h1_parser(
+//         prog.prog_fd(),
+//         true,
+//         &[beeline::header::PATH, beeline::header::METHOD],
+//     );
+
+//     let client = build_client();
+//     let resp = client
+//         .get(format!("http://{}", addr))
+//         .send()
+//         .await
+//         .expect("request");
+
+//     assert_eq!(resp.status(), 200);
+//     assert_match_eq(&prog, 1, "GET");
+//     assert_match_eq(&prog, 2, "/");
+// }
+
+// #[tokio::test]
+// async fn parse_status_line_and_subsequent_header() {
+//     let addr = server::launch().await.expect("launch server");
+
+//     let mut open_obj = OpenObject::new();
+//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+
+//     let _h1 = attach_h1_parser(
+//         prog.prog_fd(),
+//         true,
+//         &[beeline::header::PATH, header::CONTENT_LENGTH],
+//     );
+
+//     let client = build_client();
+//     let resp = client
+//         .get(format!("http://{}", addr))
+//         .send()
+//         .await
+//         .expect("request");
+
+//     assert_eq!(resp.status(), 200);
+//     assert_match_eq(&prog, 1, "/");
+//     assert_match_eq(&prog, 2, "12");
+// }

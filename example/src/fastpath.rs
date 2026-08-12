@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use as_bytes::AsBytes;
+use axum::http;
 use beeline::h1;
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
@@ -146,7 +147,7 @@ impl<'obj> Server<'obj> {
 
         let attached_parser = h1::Parser::new()
             .capture_hdr(&beeline::header::PATH)?
-            .capture_hdr(&beeline::header::CONTENT_LENGTH)?
+            .capture_hdr(&http::header::CONTENT_LENGTH)?
             .replace_parse_msg("parse_h1")
             .replace_extract("extract_h1_match")
             .attach(skel.progs.msg_verdict.as_fd().as_raw_fd())?;

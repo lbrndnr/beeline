@@ -31,16 +31,18 @@ pub struct Parser {
 
 include!(concat!(env!("OUT_DIR"), "/h1/parser.skel.rs"));
 
-fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
-    let action = match action {
-        Action::StartCapture(mid) => rodata.a_start_capture | (mid as u16) & rodata.a_id_mask,
-        Action::EndCapture(cid, mid) => {
-            let id = (cid as u16) << 6 | (mid as u16);
-            rodata.a_end_capture | id & rodata.a_id_mask
-        }
-        Action::Done => rodata.a_done,
-        Action::None => 0,
-    };
+fn new_transition(state: u16, actions: &[Action], rodata: &rodata) -> trans {
+    let action = actions
+        .iter()
+        .map(|a| match *a {
+            Action::StartCapture(mid) => rodata.a_start_capture | (mid as u16) & rodata.a_id_mask,
+            Action::EndCapture(cid, mid) => {
+                let id = (cid as u16) << 6 | (mid as u16);
+                rodata.a_end_capture | id & rodata.a_id_mask
+            }
+            Action::Done => rodata.a_done,
+        })
+        .fold(0, |acc, k| acc + k);
 
     trans { state, action }
 }
@@ -181,7 +183,7 @@ impl Parser {
                 .end_capturing(" ")?
                 .push_optional('*')?
                 .push(" HTTP/1.1")?;
-        } else if name == &STATUS {
+        } else if name == &PATH {
             self.dfa
                 .start_pattern(self.s_init)
                 .push_optional('*')?
@@ -208,45 +210,6 @@ impl Parser {
             .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
         Ok(self)
-    }
-
-    /// Configures the parser to match and capture the HTTP response status code.
-    ///
-    /// This method captures the status code from an HTTP response status line.
-    /// It expects the format: `HTTP/1.1 STATUS_CODE\r\n`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the pattern configuration fails.
-    // pub fn capture_status_code(mut self) -> Result<Parser> {
-    //     self.dfa
-    //         .start_pattern(self.s_init)
-    //         .push("HTTP/1.1 ")?
-    //         .start_capturing()
-    //         .push_optional('*')?
-    //         .end_caputuring_and_restart_with(CRLF, self.s_any)?;
-
-    //     Ok(self)
-    // }
-
-    /// Returns an iterator over all states in the parser's DFA.
-    ///
-    /// # Returns
-    ///
-    /// An iterator yielding references to state identifiers.
-    pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
-        self.dfa.iter_states()
-    }
-
-    /// Returns an iterator over all transitions in the parser's DFA.
-    ///
-    /// # Returns
-    ///
-    /// An iterator yielding tuples of (from_state, to_state, input_char, action).
-    pub fn iter_transitions<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (&'a u16, &'a u16, &'a char, &'a Action)> {
-        self.dfa.iter_transitions()
     }
 
     /// Attaches the configured parser to the target program.
@@ -323,10 +286,10 @@ impl Parser {
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
-        for (from, to, input, action) in self.iter_transitions() {
+        for (from, to, input, actions) in self.dfa.iter_transitions() {
             let s = *from as usize;
             let data = skel.maps.rodata_data.as_mut().unwrap();
-            let t = new_transition(*to, *action, data);
+            let t = new_transition(*to, actions, data);
             data.s2ts[s][*input as usize] = t;
         }
 

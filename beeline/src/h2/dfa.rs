@@ -128,10 +128,6 @@ impl Dfa {
         }
     }
 
-    pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
-        self.states.iter()
-    }
-
     pub fn iter_transitions<'a>(
         &'a self,
     ) -> impl Iterator<Item = (&'a u16, &'a u16, &'a u8, &'a Action)> {

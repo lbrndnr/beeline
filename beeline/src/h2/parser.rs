@@ -128,27 +128,6 @@ impl Parser {
         Ok(self)
     }
 
-    /// Returns an iterator over all states in the parser's DFA.
-    ///
-    /// # Returns
-    ///
-    /// An iterator yielding references to state identifiers.
-    pub fn iter_states<'a>(&'a self) -> impl Iterator<Item = &'a u16> {
-        self.dfa.iter_states()
-    }
-
-    /// Returns an iterator over all transitions in the parser's DFA.
-    ///
-    /// # Returns
-    ///
-    /// An iterator yielding tuples of (from_state, to_state, input_byte, action).
-    /// Note: Unlike HTTP/1.1, HTTP/2 uses bytes instead of chars for transitions.
-    pub fn iter_transitions<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (&'a u16, &'a u16, &'a u8, &'a Action)> {
-        self.dfa.iter_transitions()
-    }
-
     fn populate_static_table(&self, static_table: &MapHandle) -> Result<()> {
         let insert = |idx: u32, key: &str, val: Option<&str>| {
             let mut hf_key = Vec::new();
@@ -270,7 +249,7 @@ impl Parser {
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
-        for (from, to, input, action) in self.iter_transitions() {
+        for (from, to, input, action) in self.dfa.iter_transitions() {
             let s = *from as usize;
             let data = skel.maps.rodata_data.as_mut().unwrap();
             let t = new_transition(*to, *action, data);
