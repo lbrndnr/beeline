@@ -1,16 +1,29 @@
 use beeline::h1;
-use http::{HeaderName, header};
+use http::{HeaderName, HeaderValue, header};
 use reqwest::Client;
 use utils::{
     server,
     test::{OpenObject, TestProgram},
 };
 
-fn assert_match_eq(prog: &TestProgram, idx: usize, expected: &str) {
-    let actual = prog.get_match(idx).unwrap().unwrap();
-    let actual = String::from_utf8(actual).unwrap();
+fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&HeaderValue>) {
+    let actual = prog.get_match(idx).expect("get_match");
+    let actual = actual.map(|s| String::from_utf8(s).unwrap());
 
-    assert_eq!(actual.as_str(), expected);
+    if expected.is_none() {
+        assert!(
+            actual.is_none(),
+            "get_match({idx}): {}, expected: none",
+            actual.unwrap()
+        );
+    } else {
+        let expected = expected.unwrap().to_str().unwrap();
+        assert!(
+            actual.is_some(),
+            "get_match({idx}): none, expected: {expected}"
+        );
+        assert_eq!(actual.unwrap().as_str(), expected);
+    }
 }
 
 fn build_client() -> Client {
@@ -63,17 +76,17 @@ async fn parse_simple_header() {
     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
     let _h1 = attach_h1_parser(prog.prog_fd(), true, &[header::USER_AGENT]);
 
+    let user_agent = HeaderValue::from_static("some user agent");
     let client = build_client();
-    let user_agent = "beeline";
     let resp = client
         .get(format!("http://{}", addr))
-        .header(header::USER_AGENT, user_agent)
+        .header(header::USER_AGENT, user_agent.clone())
         .send()
         .await
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 1, user_agent);
+    assert_match_eq(&prog, 1, Some(&user_agent));
 }
 
 // #[tokio::test]
@@ -154,19 +167,19 @@ async fn parse_subsequent_headers() {
     );
 
     let client = build_client();
-    let user_agent = "beeline";
-    let lang = "sumsum";
+    let user_agent = HeaderValue::from_static("beeline");
+    let lang = HeaderValue::from_static("sumsum");
     let resp = client
         .get(format!("http://{}", addr))
-        .header(header::USER_AGENT, user_agent)
-        .header(header::ACCEPT_LANGUAGE, lang)
+        .header(header::USER_AGENT, user_agent.clone())
+        .header(header::ACCEPT_LANGUAGE, lang.clone())
         .send()
         .await
         .expect("request");
 
     assert_eq!(resp.status(), 200);
-    assert_match_eq(&prog, 1, user_agent);
-    assert_match_eq(&prog, 2, lang);
+    assert_match_eq(&prog, 1, Some(&user_agent));
+    assert_match_eq(&prog, 2, Some(&lang));
 }
 
 // #[tokio::test]
@@ -190,31 +203,37 @@ async fn parse_subsequent_headers() {
 //         .expect("request");
 
 //     assert_eq!(resp.status(), 200);
-//     assert_match_eq(&prog, 1, "GET");
-//     assert_match_eq(&prog, 2, "/");
+
+//     let method = HeaderValue::from_static("GET");
+//     let path = HeaderValue::from_static("/");
+//     assert_match_eq(&prog, 1, Some(&method));
+//     assert_match_eq(&prog, 2, Some(&path));
 // }
 
-// #[tokio::test]
-// async fn parse_status_line_and_subsequent_header() {
-//     let addr = server::launch().await.expect("launch server");
+#[tokio::test]
+async fn parse_status_line_and_subsequent_header() {
+    let addr = server::launch().await.expect("launch server");
 
-//     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-//     let _h1 = attach_h1_parser(
-//         prog.prog_fd(),
-//         true,
-//         &[beeline::header::PATH, header::CONTENT_LENGTH],
-//     );
+    let _h1 = attach_h1_parser(
+        prog.prog_fd(),
+        true,
+        &[beeline::header::PATH, header::CONTENT_LENGTH],
+    );
 
-//     let client = build_client();
-//     let resp = client
-//         .get(format!("http://{}", addr))
-//         .send()
-//         .await
-//         .expect("request");
+    let body = "Hello, world!";
+    let client = build_client();
+    let resp = client
+        .get(format!("http://{}", addr))
+        .body(body)
+        .send()
+        .await
+        .expect("request");
 
-//     assert_eq!(resp.status(), 200);
-//     assert_match_eq(&prog, 1, "/");
-//     assert_match_eq(&prog, 2, "12");
-// }
+    let path = HeaderValue::from_static("/");
+    let content_length = HeaderValue::from_str(&format!("{}", body.len())).unwrap();
+    assert_match_eq(&prog, 1, Some(&path));
+    assert_match_eq(&prog, 2, Some(&content_length));
+}

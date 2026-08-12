@@ -71,25 +71,21 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
 
         bpf_trace("data[%d]=%d (%d -> %d)",i, c, old_state, *s);
 
-        // it should never happen that any of these cases are true simultaneously
-        // but it makes the verifier happy when we don't use else if here
         if ((a & a_start_capture) != 0) {
             u16 cid = a & a_id_mask & MAX_MATCH_MASK;
-            bpf_debug("start capture range (%d, ?) in [%d, ...]", cid, i);
-            cidx[cid] = i;
+            bpf_debug("start capture range (%d, ?) in [%d, ...]", cid, i+1);
+            cidx[cid] = i + 1;
         }
         if ((a & a_end_capture) != 0) {
             u16 cid = ((a & a_id_1_mask) >> 6) & MAX_MATCH_MASK;
-            u16 rid = a & a_id_2_mask & MAX_MATCH_MASK;
-            bpf_debug("end capture range (%d, %d) in [%d, %d]", cid, rid, cidx[cid], i - cidx[cid]);
+            u16 mid = a & a_id_2_mask & MAX_MATCH_MASK;
+            bpf_debug("end capture range (%d, %d) in [%d, %d]", cid, mid, cidx[cid], i - cidx[cid] + 1);
 
-            ms[rid] = (struct hdr_match) {
+            ms[mid] = (struct hdr_match) {
                 .idx = cidx[cid],
-                .len = i - cidx[cid] -1,
+                .len = i - cidx[cid] + 1,
                 .in_msg = true
             };
-
-            cidx[cid] = i;
         }
         if ((a & a_done) != 0) {
             bpf_debug("done parsing at %d", i);

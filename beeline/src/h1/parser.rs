@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use crate::{
     autoload_and_attach,
-    h1::{Action, dfa::Dfa},
+    h1::{Action, StateId, dfa::Dfa},
     header::{METHOD, PATH, STATUS},
 };
 use anyhow::{Result, bail};
@@ -11,15 +11,12 @@ use libbpf_rs::{
     skel::{OpenSkel, Skel, SkelBuilder},
 };
 use std::{collections::HashMap, mem::MaybeUninit};
-use tracing::{Level, debug, warn};
+use tracing::{Level, debug, trace, warn};
 use types::*;
 
 const CRLF: &str = "\r\n";
 
 pub struct Parser {
-    s_init: u16,
-    s_any: u16,
-
     dfa: Dfa,
 
     parse_msg_fn: Option<String>,
@@ -31,20 +28,23 @@ pub struct Parser {
 
 include!(concat!(env!("OUT_DIR"), "/h1/parser.skel.rs"));
 
-fn new_transition(state: u16, actions: &[Action], rodata: &rodata) -> trans {
+fn new_transition(state: StateId, actions: &[Action], rodata: &rodata) -> trans {
     let action = actions
         .iter()
         .map(|a| match *a {
-            Action::StartCapture(mid) => rodata.a_start_capture | (mid as u16) & rodata.a_id_mask,
+            Action::StartCapture(cid) => rodata.a_start_capture | (cid.0 as u16) & rodata.a_id_mask,
             Action::EndCapture(cid, mid) => {
-                let id = (cid as u16) << 6 | (mid as u16);
+                let id = (cid.0 as u16) << 6 | (mid.0 as u16);
                 rodata.a_end_capture | id & rodata.a_id_mask
             }
             Action::Done => rodata.a_done,
         })
         .fold(0, |acc, k| acc + k);
 
-    trans { state, action }
+    trans {
+        state: state.0,
+        action,
+    }
 }
 
 #[allow(dead_code)]
@@ -53,12 +53,8 @@ impl Parser {
     ///
     /// Additional configuration must be done through the builder methods before calling `attach`.
     pub fn new() -> Parser {
-        let states = vec![0, 1];
-
         Parser {
-            s_init: 0,
-            s_any: 1,
-            dfa: Dfa::new(states.into_iter()),
+            dfa: Dfa::new(),
             parse_msg_fn: None,
             parse_buf_fn: None,
             parse_skb_fn: None,
@@ -127,17 +123,18 @@ impl Parser {
         }
 
         self.dfa
-            .start_pattern(self.s_any)
-            .push(CRLF)?
-            .push(name.as_str())?
-            .push_optional('\t')?
-            .push_optional(' ')?
-            .push(":")?
-            .push_optional('\t')?
-            .push_optional(' ')?
+            .start_pattern(false)
+            .push(CRLF)
+            .push(name.as_str())
+            .push_optional("\t")
+            .push_optional(" ")
+            .push(":")
+            .push_optional("\t")
+            .push_optional(" ")
             .start_capturing()
-            .push_optional('*')?
-            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+            .push_any(1..)
+            .end_capturing()
+            .restart_with(CRLF);
 
         Ok(self)
     }
@@ -152,23 +149,17 @@ impl Parser {
     /// Returns an error if the pattern configuration fails.
     pub fn match_h2_preface(mut self) -> Result<Parser> {
         self.dfa
-            .start_pattern(self.s_init)
+            .start_pattern(true)
             .start_capturing()
-            .push("PRI * HTTP/2.0")?
-            .push(CRLF)?
-            .push(CRLF)?
-            .end_capturing("SM")?
-            .push(CRLF)?
-            .done_on(CRLF)?;
+            .push(&format!("PRI * HTTP/2.0{}{}SM{}{}", CRLF, CRLF, CRLF, CRLF))
+            .end_capturing()
+            .done();
 
         Ok(self)
     }
 
     fn done_on_hdr_end(mut self) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_any)
-            .push(CRLF)?
-            .done_on(CRLF)?;
+        self.dfa.start_pattern(false).push(CRLF).push(CRLF).done();
 
         Ok(self)
     }
@@ -177,21 +168,24 @@ impl Parser {
     fn capture_status_line_hdr(mut self, name: &HeaderName) -> Result<Parser> {
         if name == &METHOD {
             self.dfa
-                .start_pattern(self.s_init)
+                .start_pattern(true)
                 .start_capturing()
-                .push_optional('*')?
-                .end_capturing(" ")?
-                .push_optional('*')?
-                .push(" HTTP/1.1")?;
+                .push_any(3..=4)
+                .push(" ")
+                .end_capturing()
+                .push_any(1..)
+                .push(" HTTP/1.1")
+                .restart_with(CRLF);
         } else if name == &PATH {
             self.dfa
-                .start_pattern(self.s_init)
-                .push_optional('*')?
-                .push(" ")?
+                .start_pattern(true)
+                .push_any(3..)
+                .push(" ")
                 .start_capturing()
-                .push_optional('*')?
-                .push(" HTTP/1.1")?
-                .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+                .push_any(1..)
+                .end_capturing()
+                .push(" HTTP/1.1")
+                .restart_with(CRLF);
         }
 
         Ok(self)
@@ -199,15 +193,15 @@ impl Parser {
 
     /// Configures the parser to match and capture HTTP response status code.
     fn capture_status_code(mut self) -> Result<Parser> {
-        self.dfa
-            .start_pattern(self.s_init)
-            .start_capturing()
-            .push_optional('*')?
-            .end_capturing(" ")?
-            .start_capturing()
-            .push_optional('*')?
-            .push(" HTTP/1.1")?
-            .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+        // self.dfa
+        //     .start_pattern(self.s_init)
+        //     .start_capturing()
+        //     .push_optional('*')?
+        //     .end_capturing(" ")?
+        //     .start_capturing()
+        //     .push_optional('*')?
+        //     .push(" HTTP/1.1")?
+        //     .end_caputuring_and_restart_with(CRLF, self.s_any)?;
 
         Ok(self)
     }
@@ -287,9 +281,13 @@ impl Parser {
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
         for (from, to, input, actions) in self.dfa.iter_transitions() {
-            let s = *from as usize;
+            let s = from.0 as usize;
             let data = skel.maps.rodata_data.as_mut().unwrap();
             let t = new_transition(*to, actions, data);
+            trace!(
+                "inject; from={} to={} input={} actions={:?}",
+                from.0, to.0, *input as u8 as char, actions
+            );
             data.s2ts[s][*input as usize] = t;
         }
 

@@ -1,276 +1,257 @@
-use crate::h1::{Action, Actions};
-use anyhow::{Result, bail};
-use std::collections::{HashMap, HashSet};
+use crate::h1::{Action, Actions, CaptureId, MatchId, StateId};
+use std::{collections::HashMap, ops::RangeBounds};
 use tracing::trace;
+
+const INIT_STATE: StateId = StateId(0);
+const ANY_STATE: StateId = StateId(1);
+
+const ANY_INPUT: char = '*';
 
 pub struct DfaBuilder<'a> {
     dfa: &'a mut Dfa,
-    start: u16,
-
-    /// The current capture id
-    cid: Option<u8>,
-
-    /// The current state id
-    sid: u16,
-
-    /// `true` if the current pattern captures a range
-    capturing: bool,
+    state: StateId,
+    optional_prefixes: Vec<String>,
+    start_capture: Option<CaptureId>,
+    end_capture: Option<CaptureId>,
 }
 
 impl DfaBuilder<'_> {
-    pub fn push(&mut self, input: &str) -> Result<&mut Self> {
-        self.sid = self.push_from(self.sid, input)?;
-
-        Ok(self)
+    fn new(dfa: &mut Dfa, state: StateId) -> DfaBuilder<'_> {
+        DfaBuilder {
+            dfa,
+            state,
+            optional_prefixes: Vec::new(),
+            start_capture: None,
+            end_capture: None,
+        }
     }
 
-    fn push_from(&mut self, mut sid: u16, input: &str) -> Result<u16> {
-        trace!(target: "dfa", "push_from; input={}, from={}", input.escape_debug(), sid);
-        assert!(self.dfa.states.contains(&sid));
+    fn push_edge_case_insensitive(
+        &mut self,
+        from: StateId,
+        input: char,
+        to: Option<StateId>,
+    ) -> StateId {
+        let to = to.unwrap_or(self.dfa.next_state(&from, &input));
+        let lc = input.to_ascii_lowercase();
+        self.dfa.insert_edge(from, lc, to);
 
+        let uc = input.to_ascii_uppercase();
+        if uc != lc {
+            self.dfa.insert_edge(from, uc, to);
+        }
+
+        to
+    }
+
+    fn push_edge(&mut self, input: char, to: Option<StateId>) {
+        let start = self.state;
+        while let Some(optional) = self.optional_prefixes.pop() {
+            let mut from = start;
+            for (i, c) in optional.char_indices() {
+                let to = if i == optional.len() - 1 {
+                    Some(start)
+                } else {
+                    None
+                };
+                from = self.push_edge_case_insensitive(from, c, to);
+            }
+        }
+
+        if let Some(id) = self.start_capture.take() {
+            trace!("start_capturing; state={:?}, cid={:?} ", self.state, id);
+
+            self.dfa.add_action(self.state, Action::StartCapture(id));
+            self.end_capture = Some(id);
+        }
+
+        trace!(
+            "push_edge; state={:?}, input={:?}, to={:?}",
+            self.state, input, to
+        );
+
+        self.state = self.push_edge_case_insensitive(start, input, to);
+    }
+
+    pub fn push(&mut self, input: &str) -> &mut Self {
         for c in input.chars() {
-            let start_capture = self.capturing && self.cid.is_none();
-            let action = if start_capture {
-                self.cid = Some(self.dfa.insert_new_capture_start());
-                Some(Action::StartCapture(self.cid.unwrap()))
-            } else {
-                None
-            };
-
-            if let Some((to, actions)) = self.dfa.transitions.get_mut(&(sid, c)) {
-                trace!(target: "dfa", "push_from; reusing transition");
-
-                if let Some(action) = action {
-                    actions.try_push(action)?;
-                }
-
-                sid = *to;
-            } else {
-                trace!(target: "dfa", "push_from; inserting new transition");
-
-                let actions = action.map(|a| vec![a]).unwrap_or_default();
-                let next = self.dfa.insert_state();
-                self.dfa.insert_transition(sid, next, c, actions);
-                sid = next;
-            }
+            self.push_edge(c, None);
         }
-
-        Ok(sid)
-    }
-
-    pub fn push_optional(&mut self, input: char) -> Result<&mut Self> {
-        trace!(target: "dfa", "push_optional; input={}", input.escape_debug());
-        assert!(self.dfa.states.contains(&self.sid));
-
-        // if we start capturing, we have to create a new state
-        let start_capture = self.capturing && self.cid.is_none();
-        if start_capture {
-            self.push(&input.to_string())?;
-        }
-
-        // we can keep in the current state as long as we want
-        if let Some((to, actions)) =
-            self.dfa
-                .insert_transition(self.sid, self.sid, input, Vec::new())
-        {
-            // TODO: refine this condition
-            if to != self.sid || actions.len() > 0 {
-                bail!("Conflicting transition for optional input.");
-            }
-        }
-
-        Ok(self)
-    }
-
-    pub fn start_capturing(&mut self) -> &mut Self {
-        self.capturing = true;
         self
     }
 
-    pub fn end_capturing(&mut self, input: &str) -> Result<&mut Self> {
-        trace!(target: "dfa", "end_capturing; input={}", input.escape_debug());
-        if !self.capturing || self.cid.is_none() {
-            bail!("No capture ID set.");
-        }
-
-        let rid = self.dfa.insert_new_range();
-        let to = self.dfa.insert_state();
-        self.end_pattern(input, Action::EndCapture(self.cid.unwrap(), rid), Some(to))?;
-        self.cid = None;
-        self.capturing = false;
-
-        Ok(self)
-    }
-
-    pub fn end_caputuring_and_restart_with(
-        &mut self,
-        input: &str,
-        restart_from: u16,
-    ) -> Result<&mut Self> {
-        trace!(target: "dfa", "end_capturing_and_restart_with; input={}", input.escape_debug());
-        if !self.capturing || self.cid.is_none() {
-            bail!("No capture ID set.");
-        }
-
-        let rid = self.dfa.insert_new_range();
-        let to = match self.get_sid(input) {
-            Some(sid) => sid,
-            None => self.push_from(restart_from, input)?,
+    /// Pushes the [`ANY_INPUT`] character onto the [`Dfa`]. `range`
+    /// specifies the min and max amount of times any character may
+    /// appear in the matched string.
+    pub fn push_any<R: RangeBounds<usize>>(&mut self, range: R) -> &mut Self {
+        let min_len = match range.start_bound() {
+            std::ops::Bound::Excluded(n) => *&n.saturating_sub(1),
+            std::ops::Bound::Included(n) => *n,
+            std::ops::Bound::Unbounded => 0,
         };
 
-        self.end_pattern(input, Action::EndCapture(self.cid.unwrap(), rid), Some(to))
-    }
+        let max_len = match range.end_bound() {
+            std::ops::Bound::Excluded(n) => *&n.saturating_sub(1),
+            std::ops::Bound::Included(n) => *n,
+            std::ops::Bound::Unbounded => min_len,
+        };
 
-    pub fn done_on(&mut self, input: &str) -> Result<&mut Self> {
-        if self.capturing || self.cid.is_some() {
-            bail!("Capturing range will always fail.");
+        trace!(
+            "push_any; state={:?}, min_len={:?}, max_len={:?}",
+            self.state, min_len, max_len
+        );
+
+        for _ in 0..min_len {
+            self.push_edge(ANY_INPUT, None);
         }
 
-        self.end_pattern(input, Action::Done, None)
-    }
-
-    fn end_pattern(&mut self, input: &str, action: Action, to: Option<u16>) -> Result<&mut Self> {
-        let all_but_last: String = input.chars().take(input.len() - 1).collect();
-
-        if all_but_last.len() > 0 {
-            self.push(&all_but_last)?;
+        // the following transitions are optional and must point to `self.state`
+        for i in 1..max_len - min_len {
+            let prefix = ANY_INPUT.to_string().repeat(i);
+            self.optional_prefixes.push(prefix);
         }
 
-        let last_char = input.chars().last().unwrap();
-        let to = to
-            .or_else(|| {
-                if let Some((state, _)) = self.dfa.transitions.get(&(self.sid, last_char)) {
-                    return Some(*state);
-                }
-
-                None
-            })
-            .unwrap_or_else(|| self.dfa.insert_state());
-
-        if let Some((to_old, actions)) = self.dfa.transitions.get_mut(&(self.sid, last_char)) {
-            if to != *to_old {
-                bail!(
-                    "Conflicting transition from state {} with input {}",
-                    self.sid,
-                    last_char,
-                );
-            }
-            actions.try_push(action)?;
-        } else {
-            _ = self
-                .dfa
-                .insert_transition(self.sid, to, last_char, vec![action]);
+        if matches!(range.end_bound(), std::ops::Bound::Unbounded) {
+            self.push_edge_case_insensitive(self.state, ANY_INPUT, Some(self.state));
         }
 
-        self.sid = to;
-
-        Ok(self)
+        self
     }
 
-    fn get_sid(&self, input: &str) -> Option<u16> {
-        let mut sid = self.start;
-        for c in input.chars() {
-            if let Some((to, _)) = self.dfa.transitions.get(&(sid, c)) {
-                sid = *to;
+    pub fn push_optional(&mut self, input: &str) -> &mut Self {
+        self.optional_prefixes.push(input.to_string());
+        self
+    }
+
+    pub fn start_capturing(&mut self) -> &mut Self {
+        assert!(self.start_capture.is_none());
+        let cid = self.dfa.new_capture();
+
+        self.start_capture = Some(cid);
+
+        self
+    }
+
+    pub fn end_capturing(&mut self) -> &mut Self {
+        let cid = self.end_capture.take().expect("No capture started");
+        let mid = self.dfa.new_match();
+        trace!(
+            "end_capturing; state={:?}, cid={:?} mid={:?}",
+            self.state, cid, mid
+        );
+
+        self.dfa
+            .add_action(self.state, Action::EndCapture(cid, mid));
+
+        self
+    }
+
+    /// Matches the given input string but sets the final state
+    /// to the state the DFA would be in if it started from [`ANY_STATE`].
+    pub fn restart_with(&mut self, input: &str) {
+        let final_state = input
+            .chars()
+            .fold(ANY_STATE, |state, c| self.dfa.next_state(&state, &c));
+
+        for (i, c) in input.char_indices() {
+            let to = if i == input.len() - 1 {
+                Some(final_state)
             } else {
-                return None;
-            }
+                None
+            };
+            self.push_edge(c, to);
         }
+    }
 
-        Some(sid)
+    pub fn done(&mut self) {
+        self.dfa.add_action(self.state, Action::Done);
     }
 }
 
+type EdgeMap = HashMap<StateId, HashMap<char, StateId>>;
+type ActionMap = HashMap<StateId, Vec<Action>>;
+
 pub(crate) struct Dfa {
-    /// The next free state id
-    sid: u16,
-
-    /// The next free capture id
-    cid: u8,
-
-    /// The next free range id
-    rid: u8,
-
-    states: HashSet<u16>,
-    transitions: HashMap<(u16, char), (u16, Vec<Action>)>,
+    num_captures: u16,
+    num_matches: u16,
+    num_states: u16,
+    edges: EdgeMap,
+    actions: ActionMap,
 }
 
 impl Dfa {
-    pub fn new(reserved_states: impl Iterator<Item = u16>) -> Dfa {
+    pub fn new() -> Dfa {
         Dfa {
-            sid: 0,
-            cid: 0,
-            rid: 0,
-            states: reserved_states.collect(),
-            transitions: HashMap::new(),
+            num_captures: 0,
+            num_matches: 0,
+            num_states: 2,
+            edges: HashMap::new(),
+            actions: HashMap::new(),
         }
     }
 
-    fn insert_state(&mut self) -> u16 {
-        while self.states.contains(&self.sid) {
-            self.sid += 1;
-        }
-
-        self.states.insert(self.sid);
-        self.sid
+    pub fn start_pattern<'a>(&'a mut self, status_line: bool) -> DfaBuilder<'a> {
+        trace!(target: "dfa", "start_pattern; status_line={:?}", status_line);
+        let state = if status_line { INIT_STATE } else { ANY_STATE };
+        DfaBuilder::new(self, state)
     }
 
-    fn insert_new_capture_start(&mut self) -> u8 {
-        let cid = self.cid;
-        self.cid += 1;
-        cid
+    fn new_state(&mut self) -> StateId {
+        let id = StateId(self.num_states);
+        self.num_states += 1;
+        id
     }
 
-    fn insert_new_range(&mut self) -> u8 {
-        let rid = self.rid;
-        self.rid += 1;
-        rid
+    fn new_capture(&mut self) -> CaptureId {
+        let id = CaptureId(self.num_captures);
+        self.num_captures += 1;
+        id
     }
 
-    pub fn insert_transition(
-        &mut self,
-        from: u16,
-        to: u16,
-        input: char,
-        actions: Vec<Action>,
-    ) -> Option<(u16, Vec<Action>)> {
-        trace!(target: "dfa", "insert_transition; {} --({})--> {} {:?}", from, input.escape_debug(), to, actions);
-
-        let lc_input = input.to_ascii_lowercase();
-        let uc_input = input.to_ascii_uppercase();
-
-        if let Some(transition) = self
-            .transitions
-            .insert((from, lc_input), (to, actions.clone()))
-        {
-            return Some(transition);
-        }
-
-        if lc_input != uc_input {
-            if let Some(transition) = self.transitions.insert((from, uc_input), (to, actions)) {
-                return Some(transition);
-            }
-        }
-
-        None
+    fn new_match(&mut self) -> MatchId {
+        let id = MatchId(self.num_matches);
+        self.num_matches += 1;
+        id
     }
 
-    pub fn start_pattern<'a>(&'a mut self, from: u16) -> DfaBuilder<'a> {
-        trace!(target: "dfa", "start_pattern; from={}", from);
-        DfaBuilder {
-            dfa: self,
-            start: from,
-            sid: from,
-            cid: None,
-            capturing: false,
+    /// Queries the edges to retrieve the next state from given state and
+    /// input character. Creates a new state if none exists.
+    fn next_state(&mut self, from: &StateId, input: &char) -> StateId {
+        self.edges
+            .get(from)
+            .and_then(|es| es.get(input).map(|to| *to))
+            .unwrap_or_else(|| self.new_state())
+    }
+
+    fn insert_edge(&mut self, from: StateId, input: char, to: StateId) {
+        if let Some(to_old) = self.edges.entry(from).or_default().insert(input, to) {
+            assert!(
+                to_old == to,
+                "Cannot create transition from {from:?} to {to_old:?} and {to:?}"
+            );
         }
+    }
+
+    fn add_action(&mut self, state: StateId, action: Action) {
+        self.actions
+            .entry(state)
+            .or_default()
+            .try_push(action)
+            .expect("Conflicting actions");
     }
 
     pub fn iter_transitions<'a>(
         &'a self,
-    ) -> impl Iterator<Item = (&'a u16, &'a u16, &'a char, &'a [Action])> {
-        self.transitions
-            .iter()
-            .map(|((from, input), (to, actions))| (from, to, input, actions.as_slice()))
+    ) -> impl Iterator<Item = (&'a StateId, &'a StateId, &'a char, &'a [Action])> {
+        self.edges.iter().flat_map(move |(from, edges)| {
+            edges.iter().map(move |(input, to)| {
+                let actions = self
+                    .actions
+                    .get(to)
+                    .map(|actions| actions.as_slice())
+                    .unwrap_or(&[]);
+                (from, to, input, actions)
+            })
+        })
     }
 }

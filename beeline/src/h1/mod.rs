@@ -6,15 +6,24 @@ use std::mem::discriminant;
 pub use parser::AttachedParser;
 pub use parser::Parser;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct StateId(u16);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CaptureId(u16);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MatchId(u16);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     /// Starts capturing a range
     /// The start index is identified by the cid
-    StartCapture(u8),
+    StartCapture(CaptureId),
 
     /// Ends capturing a range with a given cid (1st argument)
     /// The range is identified by the rid (2nd argument)
-    EndCapture(u8, u8),
+    EndCapture(CaptureId, MatchId),
 
     /// Terminates parsing
     Done,
