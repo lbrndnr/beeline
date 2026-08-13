@@ -152,7 +152,7 @@ static __always_inline bool path_matches(struct hdr_str *path, struct route *r) 
     bpf_for(j, 0, MAX_ROUTE_PATH) {
         if (j >= r->path_len) break;
 
-        u8 *p = path->ptr + j;
+        const u8 *p = path->ptr + j;
         u8 c = 0;
         if (bpf_probe_read_kernel(&c, 1, p) < 0) return false;
 
@@ -162,7 +162,7 @@ static __always_inline bool path_matches(struct hdr_str *path, struct route *r) 
     }
 
     if (path->len > r->path_len) {
-        u8 *p = path->ptr + r->path_len;
+        const u8 *p = path->ptr + r->path_len;
         u8 c = 0;
         if (bpf_probe_read_kernel(&c, 1, p) < 0) return false;
         if (c != ' ' && c != '\r') return false;

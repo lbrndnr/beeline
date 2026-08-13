@@ -69,8 +69,6 @@ static __always_inline int _parse_from(u8 *data, u8 *data_end, u16 start, struct
             _next(s_any, c, s, &a);
         }
 
-        bpf_trace("data[%d]=%c (%d -> %d)",i, c, old_state, *s);
-
         if ((a & a_start_capture) != 0) {
             u16 cid = a & a_id_mask & MAX_MATCH_MASK;
             bpf_debug("start capture range (%d, ?) in [%d, ...]", cid, i+1);
