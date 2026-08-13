@@ -13,11 +13,11 @@
 
 Beeline is an application-layer parser for eBPF. This allows you to process protocols (see below for a table of supported protocols) directly in the kernel, which can be much more efficient than user space processing. With Beeline, you can for example monitor application-layer traffic, redirect it based on its payload, or respond to it, directly from the kernel.
 
-Protocol      | Status
-------------- | -------------
-HTTP/1.1      | ✅ 
-HTTP/2        | ✅
-gRPC          | WIP
+Protocol      | Status  | Minimal Kernel Version
+------------- | ------- | ----------------------
+HTTP/1.1      | ✅      | 6.8
+HTTP/2        | ✅      | 7.0
+gRPC          | WIP     | 
 
 ## Build
 
