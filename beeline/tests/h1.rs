@@ -182,33 +182,32 @@ async fn parse_subsequent_headers() {
     assert_match_eq(&prog, 2, Some(&lang));
 }
 
-// #[tokio::test]
-// async fn parse_status_line_only() {
-//     let addr = server::launch().await.expect("launch server");
+#[tokio::test]
+async fn parse_status_line_only() {
+    let addr = server::launch().await.expect("launch server");
 
-//     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
 
-//     let _h1 = attach_h1_parser(
-//         prog.prog_fd(),
-//         true,
-//         &[beeline::header::PATH, beeline::header::METHOD],
-//     );
+    let _h1 = attach_h1_parser(
+        prog.prog_fd(),
+        true,
+        &[beeline::header::PATH, beeline::header::METHOD],
+    );
 
-//     let client = build_client();
-//     let resp = client
-//         .get(format!("http://{}", addr))
-//         .send()
-//         .await
-//         .expect("request");
+    let client = build_client();
+    let resp = client
+        .get(format!("http://{}", addr))
+        .send()
+        .await
+        .expect("request");
 
-//     assert_eq!(resp.status(), 200);
-
-//     let method = HeaderValue::from_static("GET");
-//     let path = HeaderValue::from_static("/");
-//     assert_match_eq(&prog, 1, Some(&method));
-//     assert_match_eq(&prog, 2, Some(&path));
-// }
+    assert_eq!(resp.status(), 200);
+    let method = HeaderValue::from_static("GET");
+    let path = HeaderValue::from_static("/");
+    assert_match_eq(&prog, 1, Some(&path));
+    assert_match_eq(&prog, 2, Some(&method));
+}
 
 #[tokio::test]
 async fn parse_status_line_and_subsequent_header() {
@@ -232,6 +231,7 @@ async fn parse_status_line_and_subsequent_header() {
         .await
         .expect("request");
 
+    assert_eq!(resp.status(), 200);
     let path = HeaderValue::from_static("/");
     let content_length = HeaderValue::from_str(&format!("{}", body.len())).unwrap();
     assert_match_eq(&prog, 1, Some(&path));

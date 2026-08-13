@@ -1,4 +1,4 @@
-use crate::h1::{Action, Actions, CaptureId, MatchId, StateId};
+use crate::h1::{Action, CaptureId, MatchId, StateId};
 use std::{collections::HashMap, ops::RangeBounds};
 use tracing::trace;
 
@@ -61,13 +61,20 @@ impl DfaBuilder<'_> {
         if let Some(id) = self.start_capture.take() {
             trace!("start_capturing; state={:?}, cid={:?} ", self.state, id);
 
-            self.dfa.add_action(self.state, Action::StartCapture(id));
+            // [`INIT_STATE`] is never entered, so a capture anchored there cannot
+            // run an action. It doesn't have to: its start index is 0, which is
+            // what the parser initializes every capture to.
+            if self.state != INIT_STATE {
+                self.dfa.add_action(self.state, Action::StartCapture(id));
+            }
             self.end_capture = Some(id);
         }
 
         trace!(
-            "push_edge; state={:?}, input={:?}, to={:?}",
-            self.state, input, to
+            "push_edge; state={:?}, input={}, to={:?}",
+            self.state,
+            input.escape_debug(),
+            to
         );
 
         self.state = self.push_edge_case_insensitive(start, input, to);
@@ -118,6 +125,43 @@ impl DfaBuilder<'_> {
         self
     }
 
+    /// Pushes one branch per input onto the [`Dfa`]. One of the branches
+    /// must be matched for the [`Dfa`] to reach a final state.
+    pub fn push_options(&mut self, inputs: &[&str]) -> &mut Self {
+        let Some(longest) = inputs.iter().copied().max_by_key(|input| input.len()) else {
+            return self;
+        };
+
+        // the longest option is pushed normally, its final state is the one
+        // all the other options have to end in as well
+        let start = self.state;
+        self.push(longest);
+        let final_state = self.state;
+
+        trace!(
+            "push_options; state={:?}, longest={}, final_state={:?}",
+            start,
+            longest.escape_debug(),
+            final_state
+        );
+
+        for input in inputs.iter().copied().filter(|input| *input != longest) {
+            assert!(!input.is_empty(), "Cannot push an empty option");
+
+            self.state = start;
+            for (i, c) in input.char_indices() {
+                let to = if i == input.len() - 1 {
+                    Some(final_state)
+                } else {
+                    None
+                };
+                self.push_edge(c, to);
+            }
+        }
+
+        self
+    }
+
     pub fn push_optional(&mut self, input: &str) -> &mut Self {
         self.optional_prefixes.push(input.to_string());
         self
@@ -149,9 +193,18 @@ impl DfaBuilder<'_> {
     /// Matches the given input string but sets the final state
     /// to the state the DFA would be in if it started from [`ANY_STATE`].
     pub fn restart_with(&mut self, input: &str) {
-        let final_state = input
-            .chars()
-            .fold(ANY_STATE, |state, c| self.dfa.next_state(&state, &c));
+        let final_state = input.chars().fold(ANY_STATE, |state, c| {
+            // next state only inserts a state, we also have to ensure an edge exists
+            let next = self.dfa.next_state(&state, &c);
+            self.push_edge_case_insensitive(state, c, Some(next));
+            next
+        });
+
+        trace!(
+            "restart_with; input={}, final_state={:?}",
+            input.escape_debug(),
+            final_state
+        );
 
         for (i, c) in input.char_indices() {
             let to = if i == input.len() - 1 {
@@ -169,7 +222,7 @@ impl DfaBuilder<'_> {
 }
 
 type EdgeMap = HashMap<StateId, HashMap<char, StateId>>;
-type ActionMap = HashMap<StateId, Vec<Action>>;
+type ActionMap = HashMap<StateId, Action>;
 
 pub(crate) struct Dfa {
     num_captures: u16,
@@ -191,7 +244,7 @@ impl Dfa {
     }
 
     pub fn start_pattern<'a>(&'a mut self, status_line: bool) -> DfaBuilder<'a> {
-        trace!(target: "dfa", "start_pattern; status_line={:?}", status_line);
+        trace!("start_pattern; status_line={:?}", status_line);
         let state = if status_line { INIT_STATE } else { ANY_STATE };
         DfaBuilder::new(self, state)
     }
@@ -227,30 +280,29 @@ impl Dfa {
         if let Some(to_old) = self.edges.entry(from).or_default().insert(input, to) {
             assert!(
                 to_old == to,
-                "Cannot create transition from {from:?} to {to_old:?} and {to:?}"
+                "Cannot create a transition from {from:?} to {to_old:?} and {to:?}"
             );
         }
     }
 
     fn add_action(&mut self, state: StateId, action: Action) {
-        self.actions
-            .entry(state)
-            .or_default()
-            .try_push(action)
-            .expect("Conflicting actions");
+        let action = match self.actions.get(&state) {
+            Some(action_old) => action_old
+                .push(action)
+                .unwrap_or_else(|err| panic!("Cannot add {action:?} to {state:?}: {err}")),
+            None => action,
+        };
+
+        self.actions.insert(state, action);
     }
 
     pub fn iter_transitions<'a>(
         &'a self,
-    ) -> impl Iterator<Item = (&'a StateId, &'a StateId, &'a char, &'a [Action])> {
+    ) -> impl Iterator<Item = (&'a StateId, &'a StateId, &'a char, Option<Action>)> {
         self.edges.iter().flat_map(move |(from, edges)| {
             edges.iter().map(move |(input, to)| {
-                let actions = self
-                    .actions
-                    .get(to)
-                    .map(|actions| actions.as_slice())
-                    .unwrap_or(&[]);
-                (from, to, input, actions)
+                let action = self.actions.get(to).copied();
+                (from, to, input, action)
             })
         })
     }

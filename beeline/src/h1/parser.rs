@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use crate::{
     autoload_and_attach,
-    h1::{Action, StateId, dfa::Dfa},
+    h1::{Action, CaptureId, MatchId, StateId, dfa::Dfa},
     header::{METHOD, PATH, STATUS},
 };
 use anyhow::{Result, bail};
@@ -28,18 +28,23 @@ pub struct Parser {
 
 include!(concat!(env!("OUT_DIR"), "/h1/parser.skel.rs"));
 
-fn new_transition(state: StateId, actions: &[Action], rodata: &rodata) -> trans {
-    let action = actions
-        .iter()
-        .map(|a| match *a {
-            Action::StartCapture(cid) => rodata.a_start_capture | (cid.0 as u16) & rodata.a_id_mask,
-            Action::EndCapture(cid, mid) => {
-                let id = (cid.0 as u16) << 6 | (mid.0 as u16);
-                rodata.a_end_capture | id & rodata.a_id_mask
-            }
-            Action::Done => rodata.a_done,
-        })
-        .fold(0, |acc, k| acc + k);
+fn new_transition(state: StateId, action: Option<Action>, rodata: &rodata) -> trans {
+    fn start(cid: CaptureId, rodata: &rodata) -> u16 {
+        rodata.a_start_capture | (cid.0 as u16) & rodata.a_id_mask
+    }
+    fn end(cid: CaptureId, mid: MatchId, rodata: &rodata) -> u16 {
+        let id = (cid.0 as u16) << 6 | (mid.0 as u16);
+        rodata.a_end_capture | id & rodata.a_id_mask
+    }
+
+    let action = match action {
+        Some(Action::StartCapture(cid)) => start(cid, rodata),
+        Some(Action::EndCapture(cid, mid)) => end(cid, mid, rodata),
+        Some(Action::Done) => rodata.a_done,
+        Some(Action::StartCaptureAndDone(cid)) => start(cid, rodata) | rodata.a_done,
+        Some(Action::EndCaptureAndDone(cid, mid)) => end(cid, mid, rodata) | rodata.a_done,
+        None => 0,
+    };
 
     trans {
         state: state.0,
@@ -166,26 +171,35 @@ impl Parser {
 
     /// Configures the parser to match and capture HTTP request status line components.
     fn capture_status_line_hdr(mut self, name: &HeaderName) -> Result<Parser> {
+        let methods = [
+            "POST", "GET", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE",
+        ];
+
         if name == &METHOD {
             self.dfa
                 .start_pattern(true)
                 .start_capturing()
-                .push_any(3..=4)
-                .push(" ")
+                .push_options(&methods)
                 .end_capturing()
+                .push(" ")
                 .push_any(1..)
                 .push(" HTTP/1.1")
                 .restart_with(CRLF);
         } else if name == &PATH {
             self.dfa
                 .start_pattern(true)
-                .push_any(3..)
+                .push_options(&methods)
                 .push(" ")
                 .start_capturing()
                 .push_any(1..)
                 .end_capturing()
                 .push(" HTTP/1.1")
                 .restart_with(CRLF);
+        } else {
+            panic!(
+                "capture_status_line_hdr called with unsupported header name: {}",
+                name
+            );
         }
 
         Ok(self)
@@ -280,13 +294,13 @@ impl Parser {
     }
 
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
-        for (from, to, input, actions) in self.dfa.iter_transitions() {
+        for (from, to, input, action) in self.dfa.iter_transitions() {
             let s = from.0 as usize;
             let data = skel.maps.rodata_data.as_mut().unwrap();
-            let t = new_transition(*to, actions, data);
+            let t = new_transition(*to, action, data);
             trace!(
-                "inject; from={} to={} input={} actions={:?}",
-                from.0, to.0, *input as u8 as char, actions
+                "inject; from={} to={} input={} action={:?}",
+                from.0, to.0, *input as u8 as char, action
             );
             data.s2ts[s][*input as usize] = t;
         }
