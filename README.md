@@ -42,10 +42,15 @@ RUST_LOG=trace cargo test
 
 Once you can build Beeline, you can also run the example. It is a simple HTTP server, with Beeline attached to it. It will serve some static files directly from the kernel. To run it, first start the server:
 ```bash
-cargo run --bin example
+RUST_LOG=debug cargo run --bin example
 ```
 
 Then, in another terminal, make a request to the server:
 ```bash
 curl -vv http://127.0.0.1:8080/index.html
+```
+
+In the logs of the server, you should find a line that indicates that the request was served directly from the kernel:
+```
+Served request to /index.html
 ```

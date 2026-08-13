@@ -223,7 +223,7 @@ int msg_verdict(struct sk_msg_md *msg) {
         }
 
         struct hdr_str content_length = { 0 };
-        if (extract_h1_match(msg, &pres, 2, &content_length) == 0) {
+        if (extract_h1_match(msg, &pres, 1, &content_length) == 0) {
             bpf_trace("content length: %s", content_length.ptr);
 
             char digits[16] = { 0 };
@@ -240,12 +240,20 @@ int msg_verdict(struct sk_msg_md *msg) {
             }
         }
 
-        // capture index 1 is the request URI captured by
-        // `match_http_req_status_line` (index 0 is the method)
         struct hdr_str path = { 0 };
-        if (extract_h1_match(msg, &pres, 1, &path) == 0) {
+        if (extract_h1_match(msg, &pres, 0, &path) == 0) {
             if (try_serve_route(msg, &ikey, &path) < 0) {
                 bpf_error("Failed to serve file");
+            }
+            else {
+                // the following is a bit wasteful, so we only do it for debugging purposes
+                #if BPF_TRACING_LEVEL >= BPF_TRACING_LEVEL_TRACE
+
+                char head[32] = {};
+                bpf_probe_read_kernel_str(head, (path.len + 1) & 0x1F, path.ptr);
+
+                bpf_debug("Served request to %s", head);
+                #endif
             }
         }
     }
