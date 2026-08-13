@@ -146,8 +146,8 @@ impl<'obj> Server<'obj> {
         let sock_map_fd = skel.maps.sock_map.as_fd().as_raw_fd();
 
         let attached_parser = h1::Parser::new()
-            .capture_hdr(&beeline::header::PATH)?
-            .capture_hdr(&http::header::CONTENT_LENGTH)?
+            .capture_hdr(&beeline::header::PATH)
+            .capture_hdr(&http::header::CONTENT_LENGTH)
             .replace_parse_msg("parse_h1")
             .replace_extract("extract_h1_match")
             .attach(skel.progs.msg_verdict.as_fd().as_raw_fd())?;

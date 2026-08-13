@@ -3,7 +3,7 @@ use http::{HeaderName, HeaderValue, header};
 use reqwest::Client;
 use utils::{
     server,
-    test::{OpenObject, TestProgram},
+    test::{Direction, OpenObject, TestProgram},
 };
 
 fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&HeaderValue>) {
@@ -33,10 +33,10 @@ fn build_client() -> Client {
 fn attach_h1_parser(prog_fd: i32, match_preface: bool, hdrs: &[HeaderName]) -> h1::AttachedParser {
     let mut h1 = h1::Parser::new();
     if match_preface {
-        h1 = h1.match_h2_preface().expect("match preface");
+        h1 = h1.match_h2_preface();
     }
     for hdr in hdrs {
-        h1 = h1.capture_hdr(hdr).expect(&format!("capture {:?}", hdr));
+        h1 = h1.capture_hdr(hdr);
     }
 
     h1.replace_parse_msg("parse_h1")
@@ -51,7 +51,7 @@ async fn match_h2_preface() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
 
     let _h1 = attach_h1_parser(prog.prog_fd(), true, &[]);
     let client = Client::builder()
@@ -73,7 +73,7 @@ async fn parse_simple_header() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
     let _h1 = attach_h1_parser(prog.prog_fd(), true, &[header::USER_AGENT]);
 
     let user_agent = HeaderValue::from_static("some user agent");
@@ -94,7 +94,7 @@ async fn parse_simple_header() {
 //     let server = server::launch().await;
 
 //     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+//     let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
 
 //     let _h1 = Parser::new()
 //         .match_preface()
@@ -126,7 +126,7 @@ async fn parse_simple_header() {
 //     let server = server::launch().await;
 
 //     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+//     let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
 
 //     let _h1 = Parser::new()
 //         .match_preface()
@@ -158,7 +158,7 @@ async fn parse_subsequent_headers() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
 
     let _h1 = attach_h1_parser(
         prog.prog_fd(),
@@ -187,7 +187,7 @@ async fn parse_status_line_only() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
 
     let _h1 = attach_h1_parser(
         prog.prog_fd(),
@@ -214,7 +214,7 @@ async fn parse_status_line_and_subsequent_header() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj).expect("attach");
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
 
     let _h1 = attach_h1_parser(
         prog.prog_fd(),
@@ -235,5 +235,34 @@ async fn parse_status_line_and_subsequent_header() {
     let path = HeaderValue::from_static("/");
     let content_length = HeaderValue::from_str(&format!("{}", body.len())).unwrap();
     assert_match_eq(&prog, 1, Some(&path));
+    assert_match_eq(&prog, 2, Some(&content_length));
+}
+
+#[tokio::test]
+async fn parse_status_code() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Upstream).expect("attach");
+
+    let _h1 = attach_h1_parser(
+        prog.prog_fd(),
+        true,
+        &[beeline::header::STATUS, header::CONTENT_LENGTH],
+    );
+
+    let body = "Hello, world!";
+    let client = build_client();
+    let resp = client
+        .get(format!("http://{}", addr))
+        .body(body)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), 200);
+    let status = HeaderValue::from_static("200");
+    let content_length = HeaderValue::from_str(&format!("{}", body.len())).unwrap();
+    assert_match_eq(&prog, 1, Some(&status));
     assert_match_eq(&prog, 2, Some(&content_length));
 }

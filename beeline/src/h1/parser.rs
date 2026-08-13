@@ -4,7 +4,7 @@ use crate::{
     h1::{Action, CaptureId, MatchId, StateId, dfa::Dfa},
     header::{METHOD, PATH, STATUS},
 };
-use anyhow::{Result, bail};
+use anyhow::Result;
 use http::HeaderName;
 use libbpf_rs::{
     Link, MapCore, OpenObject, PrintLevel, set_print,
@@ -120,7 +120,7 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if the pattern configuration fails.
-    pub fn capture_hdr(mut self, name: &HeaderName) -> Result<Parser> {
+    pub fn capture_hdr(mut self, name: &HeaderName) -> Parser {
         if name == &METHOD || name == &PATH {
             return self.capture_status_line_hdr(name);
         } else if name == &STATUS {
@@ -141,7 +141,7 @@ impl Parser {
             .end_capturing()
             .restart_with(CRLF);
 
-        Ok(self)
+        self
     }
 
     /// Configures the parser to match an HTTP/2 preface in an HTTP/1.1 connection.
@@ -152,7 +152,7 @@ impl Parser {
     /// # Errors
     ///
     /// Returns an error if the pattern configuration fails.
-    pub fn match_h2_preface(mut self) -> Result<Parser> {
+    pub fn match_h2_preface(mut self) -> Parser {
         self.dfa
             .start_pattern(true)
             .start_capturing()
@@ -160,17 +160,17 @@ impl Parser {
             .end_capturing()
             .done();
 
-        Ok(self)
+        self
     }
 
-    fn done_on_hdr_end(mut self) -> Result<Parser> {
+    fn done_on_hdr_end(mut self) -> Parser {
         self.dfa.start_pattern(false).push(CRLF).push(CRLF).done();
 
-        Ok(self)
+        self
     }
 
     /// Configures the parser to match and capture HTTP request status line components.
-    fn capture_status_line_hdr(mut self, name: &HeaderName) -> Result<Parser> {
+    fn capture_status_line_hdr(mut self, name: &HeaderName) -> Parser {
         let methods = [
             "POST", "GET", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE",
         ];
@@ -202,22 +202,22 @@ impl Parser {
             );
         }
 
-        Ok(self)
+        self
     }
 
     /// Configures the parser to match and capture HTTP response status code.
-    fn capture_status_code(mut self) -> Result<Parser> {
-        // self.dfa
-        //     .start_pattern(self.s_init)
-        //     .start_capturing()
-        //     .push_optional('*')?
-        //     .end_capturing(" ")?
-        //     .start_capturing()
-        //     .push_optional('*')?
-        //     .push(" HTTP/1.1")?
-        //     .end_caputuring_and_restart_with(CRLF, self.s_any)?;
+    fn capture_status_code(mut self) -> Parser {
+        self.dfa
+            .start_pattern(true)
+            .push("HTTP/1.1 ")
+            .start_capturing()
+            .push_any(3..=3)
+            .end_capturing()
+            // the reason phrase is matched but not captured
+            .push_any(1..)
+            .restart_with(CRLF);
 
-        Ok(self)
+        self
     }
 
     /// Attaches the configured parser to the target program.
@@ -238,7 +238,7 @@ impl Parser {
     pub fn attach<'obj>(self, target: i32) -> Result<AttachedParser> {
         set_print(Some((PrintLevel::Debug, crate::print)));
 
-        let parser = self.done_on_hdr_end()?;
+        let parser = self.done_on_hdr_end();
 
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();

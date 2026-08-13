@@ -32,6 +32,14 @@ fn print(level: PrintLevel, msg: String) {
     }
 }
 
+/// The direction of the messages to parse. Requests travel downstream to the
+/// server, responses upstream to the client.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    Downstream,
+    Upstream,
+}
+
 pub struct TestProgram<'obj> {
     skel: ProgSkel<'obj>,
     #[allow(dead_code)]
@@ -46,6 +54,7 @@ impl<'obj> TestProgram<'obj> {
     pub fn attach<A: ToSocketAddrs>(
         address: A,
         open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
+        direction: Direction,
     ) -> Result<Self> {
         set_print(Some((PrintLevel::Debug, print)));
 
@@ -70,6 +79,7 @@ impl<'obj> TestProgram<'obj> {
 
         open_skel.maps.rodata_data.as_mut().unwrap().ip4 = ip4;
         open_skel.maps.rodata_data.as_mut().unwrap().port = address.port() as u32;
+        open_skel.maps.rodata_data.as_mut().unwrap().parse_resp = direction == Direction::Upstream;
 
         let skel = open_skel.load()?;
         let sock_map_fd = skel.maps.sock_map.as_fd().as_raw_fd();

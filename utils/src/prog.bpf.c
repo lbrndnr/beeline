@@ -24,6 +24,9 @@ struct {
 volatile const u32 ip4;
 volatile const u32 port;
 
+// parse the responses the server sends instead of the requests it receives
+volatile const bool parse_resp;
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 32);
@@ -106,6 +109,12 @@ int msg_verdict(struct sk_msg_md *msg) {
 
     bool is_downstream = (ikey.remote.ip4 == ip4 && ikey.remote.port == port);
     bpf_trace("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
+
+    // requests travel downstream, responses upstream. only one direction is parsed,
+    // the other one would just clear the matches of the first
+    if (is_downstream == parse_resp) {
+        return SK_PASS;
+    }
 
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
     bool store_matches = false;
@@ -191,7 +200,11 @@ int monitor_sockets(struct bpf_sock_ops *ops) {
 
         bpf_debug("Established socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
 
-        if (skey.remote.ip4 == ip4 && skey.remote.port == port) {
+        // the client socket carries the requests, the accepted one the responses
+        bool is_client = (skey.remote.ip4 == ip4 && skey.remote.port == port);
+        bool is_server = (skey.local.ip4 == ip4 && skey.local.port == port);
+
+        if (is_client || is_server) {
             if (bpf_sock_hash_update(ops, &sock_map, &skey, BPF_ANY) < 0) {
                 bpf_error("Failed to add socket [%pI4:%u->%pI4:%u]", &skey.local.ip4, skey.local.port, &skey.remote.ip4, skey.remote.port);
                 return SK_PASS;
