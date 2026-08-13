@@ -1,6 +1,11 @@
 use beeline::h1;
 use http::{HeaderName, HeaderValue, header};
 use reqwest::Client;
+use std::net::SocketAddr;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 use utils::{
     server,
     test::{Direction, OpenObject, TestProgram},
@@ -28,6 +33,20 @@ fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&HeaderValue
 
 fn build_client() -> Client {
     Client::builder().build().expect("client")
+}
+
+/// Writes `req` to a raw connection to `addr` and returns the response it reads back.
+async fn send_raw(addr: SocketAddr, req: &str) -> String {
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .expect("write request");
+
+    let mut buf = [0; 1024];
+    let len = stream.read(&mut buf).await.expect("read response");
+
+    String::from_utf8_lossy(&buf[..len]).into_owned()
 }
 
 fn attach_h1_parser(prog_fd: i32, match_preface: bool, hdrs: &[HeaderName]) -> h1::AttachedParser {
@@ -89,69 +108,66 @@ async fn parse_simple_header() {
     assert_match_eq(&prog, 1, Some(&user_agent));
 }
 
-// #[tokio::test]
-// async fn ignore_header_case() {
-//     let server = server::launch().await;
+#[tokio::test]
+async fn ignore_header_case() {
+    let addr = server::launch().await.expect("launch server");
 
-//     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
+    let _h1 = attach_h1_parser(prog.prog_fd(), true, &[header::USER_AGENT]);
 
-//     let _h1 = Parser::new()
-//         .match_preface()
-//         .expect("match preface")
-//         .match_http_hdr("user-agent")
-//         .expect("match user-agent")
-//         .replace_parse_msg("parse_h1")
-//         .replace_matched("matched_h1")
-//         .replace_extract("extract_h1_match")
-//         .attach(prog.prog_fd())
-//         .expect("attach parser");
+    // reqwest normalizes header names, so the request is written to the socket as is
+    let user_agent = HeaderValue::from_static("beeline");
+    let req = format!(
+        "GET / HTTP/1.1\r\nHost: {addr}\r\nUsEr-aGEnT: {}\r\n\r\n",
+        user_agent.to_str().unwrap()
+    );
 
-//     let client = build_client();
-//     let user_agent = "beeline";
-//     let resp = client
-//         .get(format!("http://{}", addr))
-//         .header("UsEr-aGEnT", user_agent) // TODO: this doesn't seem to be working
-//         .send()
-//         .await
-//         .expect("request");
+    let resp = send_raw(addr, &req).await;
 
-//     assert_eq!(resp.status(), 200);
-//     assert_match_eq(&prog, 1, user_agent);
+    assert!(
+        resp.starts_with("HTTP/1.1 200 OK"),
+        "unexpected response: {resp}"
+    );
+    assert_match_eq(&prog, 1, Some(&user_agent));
+}
 
-// }
+#[tokio::test]
+async fn ignores_header_whitespace() {
+    let addr = server::launch().await.expect("launch server");
 
-// #[tokio::test]
-// async fn ignores_header_whitespace() {
-//     let server = server::launch().await;
+    let mut open_obj = OpenObject::new();
+    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
+    let _h1 = attach_h1_parser(prog.prog_fd(), true, &[header::USER_AGENT]);
 
-//     let mut open_obj = OpenObject::new();
-//     let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach");
+    // the whitespace between the colon and the value is not part of the value
+    let user_agent = HeaderValue::from_static("beeline");
+    let req = format!(
+        "GET / HTTP/1.1\r\nHost: {addr}\r\nuser-agent:  \t{}\r\n\r\n",
+        user_agent.to_str().unwrap()
+    );
 
-//     let _h1 = Parser::new()
-//         .match_preface()
-//         .expect("match preface")
-//         .match_http_hdr("user-agent")
-//         .expect("match user-agent")
-//         .replace_parse_msg("parse_h1")
-//         .replace_matched("matched_h1")
-//         .replace_extract("extract_h1_match")
-//         .attach(prog.prog_fd())
-//         .expect("attach parser");
+    let resp = send_raw(addr, &req).await;
 
-//     let client = build_client();
-//     let user_agent = "beeline";
-//     let resp = client
-//         .get(format!("http://{}", addr))
-//         .header("user-agent   ", format!("  {}", user_agent))
-//         .send()
-//         .await
-//         .expect("request");
+    assert!(
+        resp.starts_with("HTTP/1.1 200 OK"),
+        "unexpected response: {resp}"
+    );
+    assert_match_eq(&prog, 1, Some(&user_agent));
 
-//     assert_eq!(resp.status(), 200);
-//     assert_match_eq(&prog, 1, user_agent);
+    // beeline also matches whitespace between the name and the colon. the server
+    // rejects such a request as a smuggling risk, but it is parsed off the wire
+    // before it ever gets there, so its status is of no interest here
+    let user_agent = HeaderValue::from_static("sumsum");
+    let req = format!(
+        "GET / HTTP/1.1\r\nHost: {addr}\r\nuser-agent \t:  {}\r\n\r\n",
+        user_agent.to_str().unwrap()
+    );
 
-// }
+    _ = send_raw(addr, &req).await;
+
+    assert_match_eq(&prog, 1, Some(&user_agent));
+}
 
 #[tokio::test]
 async fn parse_subsequent_headers() {
