@@ -124,7 +124,9 @@ int msg_verdict(struct sk_msg_md *msg) {
     else {
         msg_len = parse_h1(msg, &pres);
         if (msg_len < 0) {
-            bpf_error("Failed to parse h1 message: %s", msg->data);
+            // It's possible that this fails because we're actually parsing the body.
+            // To avoid this, we'd have to parse the content-length to skip the body.
+            // Consolut the example to see how to do this.
             return SK_PASS;
         }
 
