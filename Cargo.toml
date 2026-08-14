@@ -7,6 +7,6 @@ license = "GPL-3.0"
 authors = [
     "lbrndnr <mail@laurinbrandner.ch>",
 ]
-repository = "https://github.com/lbrndnr/beeline-rs"
+repository = "https://github.com/lbrndnr/beeline"
 readme = "README.md"
 keywords = ["ebpf", "bpf", "libbpf", "l7"]
