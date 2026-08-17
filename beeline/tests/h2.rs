@@ -149,7 +149,8 @@ async fn parse_header_field_no_indexing_name_indexed_in_static_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[header::AUTHORIZATION]);
@@ -172,7 +173,8 @@ async fn parse_header_field_never_indexing_name_indexed_in_static_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
@@ -196,7 +198,8 @@ async fn parse_header_field_never_indexing_new_name() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER]);
@@ -220,7 +223,8 @@ async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() 
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[header::USER_AGENT, PATH_HEADER]);
@@ -250,7 +254,8 @@ async fn parse_header_field_incremental_indexing_new_name() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, PATH_HEADER]);
@@ -275,7 +280,8 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(
@@ -329,7 +335,8 @@ async fn update_dynamic_table_size() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[]);
@@ -349,7 +356,8 @@ async fn evict_header_field_from_dynamic_table() {
     let addr = server::launch().await.expect("launch server");
 
     let mut open_obj = OpenObject::new();
-    let prog = TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, header::USER_AGENT]);

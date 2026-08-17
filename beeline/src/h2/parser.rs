@@ -122,7 +122,7 @@ impl Parser {
 
         self.dfa
             .start_pattern(self.s_any)
-            .push(&name_encoded)?
+            .push(&name_encoded)
             .capture_field_value();
 
         Ok(self)

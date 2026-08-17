@@ -32,6 +32,12 @@ volatile const u32 port;
 #define MAX_ROUTE_PATH 128
 #define MAX_ROUTE_BODY 4096
 
+#define H1_PREFACE_MID 0
+#define H1_PATH_MID 1
+#define H1_CONTENT_LENGTH_MID 2
+#define H2_PATH_MID 0
+#define H2_CONTENT_LENGTH_MID 1
+
 struct route {
     u8 path[MAX_ROUTE_PATH];
     u32 path_len;
@@ -191,6 +197,23 @@ static __always_inline int try_serve_route(struct sk_msg_md *msg, struct ip4_con
     return -1;
 }
 
+static __always_inline int parse_content_length(const struct hdr_str *content_length) {
+    char digits[16] = { 0 };
+    u32 n = content_length->len;
+    if (n > 0) {
+        bpf_clamp_uminmax(n, 1, sizeof(digits) - 1);
+
+        if (bpf_probe_read_kernel(digits, n, content_length->ptr) == 0) {
+            unsigned long len = 0;
+            if (bpf_strtoul(digits, n, 0, &len) >= 0 && len > 0) {
+                return len;
+            }
+        }
+    }
+
+    return -1;
+}
+
 SEC("sk_msg")
 int msg_verdict(struct sk_msg_md *msg) {
     // socket identifeir of the ingress connection
@@ -209,53 +232,75 @@ int msg_verdict(struct sk_msg_md *msg) {
     bpf_debug("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
 
     bool is_h2 = (bpf_map_lookup_elem(&upgraded_conns, &ikey) != NULL);
-    int msg_len = 0;
+    int msg_len = -1;
     struct parse_res pres = { 0 };
+    struct hdr_str path = { 0 };
+    int path_res = -1;
 
     if (is_h2) {
-        return SK_PASS;
+        msg_len = parse_h2(msg, &pres);
+        if (msg_len >= 0) {
+            struct hdr_str content_length = { 0 };
+            if (extract_h1_match(msg, &pres, H2_CONTENT_LENGTH_MID, &content_length) == 0) {
+                bpf_trace("content length: %s", content_length.ptr);
+
+                int res = parse_content_length(&content_length);
+                if (res > 0) msg_len += res;
+            }
+
+            struct hdr_str path = { 0 };
+            path_res = extract_h2_match(msg, &pres, H2_PATH_MID, &path);
+        }
     }
     else {
         msg_len = parse_h1(msg, &pres);
-        if (msg_len < 0) {
-            bpf_error("Failed to parse h1 message: %s", msg->data);
-            return SK_PASS;
-        }
+        if (msg_len > 0) {
+            if (matched_h1(msg, &pres, H1_PREFACE_MID)) {
+                bpf_trace("Upgrading connection to HTTP/2");
 
-        struct hdr_str content_length = { 0 };
-        if (extract_h1_match(msg, &pres, 1, &content_length) == 0) {
-            bpf_trace("content length: %s", content_length.ptr);
+                int val = 1;
+                bpf_map_update_elem(&upgraded_conns, &ikey, &val, BPF_ANY);
+                num_upgraded_conns++;
 
-            char digits[16] = { 0 };
-            u32 n = content_length.len;
-            if (n > 0) {
-                bpf_clamp_uminmax(n, 1, sizeof(digits) - 1);
+                // the H2 preface is 24 bytes long
+                bpf_msg_apply_bytes(msg, 24);
 
-                if (bpf_probe_read_kernel(digits, n, content_length.ptr) == 0) {
-                    unsigned long len = 0;
-                    if (bpf_strtoul(digits, n, 0, &len) >= 0 && len > 0) {
-                        msg_len += len;
-                    }
-                }
+                return SK_PASS;
             }
-        }
 
-        struct hdr_str path = { 0 };
-        if (extract_h1_match(msg, &pres, 0, &path) == 0) {
-            if (try_serve_route(msg, &ikey, &path) < 0) {
-                bpf_error("Failed to serve file");
+            struct hdr_str content_length = { 0 };
+            if (extract_h1_match(msg, &pres, H1_CONTENT_LENGTH_MID, &content_length) == 0) {
+                bpf_trace("content length: %s", content_length.ptr);
+
+                int res = parse_content_length(&content_length);
+                if (res > 0) msg_len += res;
             }
-            else {
-                // the following is a bit wasteful, so we only do it for debugging purposes
-                #if BPF_TRACING_LEVEL >= BPF_TRACING_LEVEL_TRACE
 
-                char head[32] = {};
-                bpf_probe_read_kernel_str(head, (path.len + 1) & 0x1F, path.ptr);
-
-                bpf_debug("Served request to %s", head);
-                #endif
-            }
+            extract_h1_match(msg, &pres, H1_PATH_MID, &path);
         }
+    }
+
+    bool served = false;
+    if (path_res == 0) {
+        if (try_serve_route(msg, &ikey, &path) < 0) {
+            bpf_error("Failed to serve file via HTTP/2");
+        }
+        else {
+            served = true;
+
+            // the following is a bit wasteful, so we only do it for debugging purposes
+            #if BPF_TRACING_LEVEL >= BPF_TRACING_LEVEL_TRACE
+
+            char head[32] = {};
+            bpf_probe_read_kernel_str(head, (path.len + 1) & 0x1F, path.ptr);
+
+            bpf_debug("Served request to %s", head);
+            #endif
+        }
+    }
+
+    if (!served) {
+        bpf_msg_apply_bytes(msg, msg_len);
     }
 
     return SK_PASS;

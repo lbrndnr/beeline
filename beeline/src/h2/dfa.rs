@@ -1,5 +1,4 @@
 use crate::h2::Action;
-use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use tracing::trace;
 
@@ -14,14 +13,13 @@ pub struct DfaBuilder<'a> {
 }
 
 impl DfaBuilder<'_> {
-    pub fn push(&mut self, input: &[u8]) -> Result<&mut Self> {
-        self.sid = self.push_from(self.sid, input)?;
+    pub fn push(&mut self, input: &[u8]) -> &mut Self {
+        self.sid = self.push_from(self.sid, input);
 
-        Ok(self)
+        self
     }
 
-    fn push_from(&mut self, mut sid: u16, input: &[u8]) -> Result<u16> {
-        // trace!(target: "dfa", "push: {}, from {}", input.escape_debug(), sid);
+    fn push_from(&mut self, mut sid: u16, input: &[u8]) -> u16 {
         assert!(self.dfa.states.contains(&sid));
 
         for c in input.iter() {
@@ -43,7 +41,7 @@ impl DfaBuilder<'_> {
             }
         }
 
-        Ok(sid)
+        sid
     }
 
     pub fn capture_field_value(&mut self) -> &mut Self {

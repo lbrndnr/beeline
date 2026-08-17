@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail};
 use as_bytes::AsBytes;
 use axum::http;
-use beeline::h1;
+use beeline::{h1, h2};
 use libbpf_rs::{
     Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
     skel::{OpenSkel, Skel, SkelBuilder},
@@ -46,7 +46,9 @@ pub struct Server<'obj> {
     #[allow(dead_code)]
     sockops: Link,
     #[allow(dead_code)]
-    attached_parser: h1::AttachedParser,
+    h1: h1::AttachedParser,
+    #[allow(dead_code)]
+    h2: h2::AttachedParser,
 }
 
 unsafe impl<'obj> Send for Server<'obj> {}
@@ -144,13 +146,23 @@ impl<'obj> Server<'obj> {
 
         let skel = open_skel.load()?;
         let sock_map_fd = skel.maps.sock_map.as_fd().as_raw_fd();
+        let prog_fd = skel.progs.msg_verdict.as_fd().as_raw_fd();
 
-        let attached_parser = h1::Parser::new()
+        let h1 = h1::Parser::new()
+            .match_h2_preface()
             .capture_hdr(&beeline::header::PATH)
             .capture_hdr(&http::header::CONTENT_LENGTH)
             .replace_parse_msg("parse_h1")
             .replace_extract("extract_h1_match")
-            .attach(skel.progs.msg_verdict.as_fd().as_raw_fd())?;
+            .replace_matched("matched_h1")
+            .attach(prog_fd)?;
+
+        let h2 = h2::Parser::new()
+            .capture_hdr(&beeline::header::PATH)?
+            .capture_hdr(&http::header::CONTENT_LENGTH)?
+            .replace_parse_msg("parse_h2")
+            .replace_extract("extract_h2_match")
+            .attach(prog_fd)?;
 
         _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -171,7 +183,8 @@ impl<'obj> Server<'obj> {
         Ok(Self {
             sockops,
             skel,
-            attached_parser,
+            h1,
+            h2,
         })
     }
 }
