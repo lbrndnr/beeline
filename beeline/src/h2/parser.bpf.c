@@ -143,6 +143,17 @@ struct msg_ctx {
     struct ip4_conn conn;
 };
 
+// Reads the stream id out of the frame header `data` points at. `data` must be
+// known to hold at least the 9 bytes of a frame header.
+static __always_inline struct h2_frame _new_h2_frame(const u8 *data, u8 type, u8 flags) {
+    return (struct h2_frame) {
+        // the top bit of the stream id is reserved
+        .sid = ((u32)data[5] << 24 | (u32)data[6] << 16 | (u32)data[7] << 8 | (u32)data[8]) & 0x7FFFFFFF,
+        .type = type,
+        .flags = flags,
+    };
+}
+
 static __always_inline struct msg_ctx _new_msg_ctx(const struct sk_msg_md *msg) {
     return (struct msg_ctx) {
         .data = msg->data,
@@ -585,7 +596,7 @@ static __always_inline int _parse_skb_from(const struct __sk_buff *skb, u16 star
 }
 
 SEC("freplace")
-int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
+int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull) {
     u8 *data = (u8 *)(long)msg->data;
     u8 *data_end = (u8 *)(long)msg->data_end;
 
@@ -596,6 +607,8 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
     u8 flags = data[4];
     bool padded = flags & 0x08;
     u8 hdr_len = (padded) ? 10 : 9;
+
+    *frame = _new_h2_frame(data, type, flags);
 
     bpf_debug("Parsing HTTP/2 message with length %d, type %d, flags %d", len, type, flags);
 
@@ -625,7 +638,7 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
 }
 
 SEC("freplace")
-int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull, u16 *null_prefix) {
     u8 *data = (u8 *)(long)skb->data;
     u8 *data_end = (u8 *)(long)skb->data_end;
 
@@ -636,6 +649,8 @@ int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *
     u8 flags = data[4];
     bool padded = flags & 0x08;
     u8 hdr_len = (padded) ? 10 : 9;
+
+    *frame = _new_h2_frame(data, type, flags);
 
     bpf_debug("Parsing HTTP/2 sk_buff with length %d, type %d, flags %d", len, type, flags);
 
@@ -655,7 +670,7 @@ int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, u16 *
 }
 
 SEC("freplace")
-int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct parse_res *pres __arg_nonnull, u16 *null_prefix) {
+int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull, u16 *null_prefix) {
     u8 *data = bpf_dynptr_data(buf_ptr, 0, 9);
     if (data == NULL) return -1;
 
@@ -664,6 +679,8 @@ int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct pa
     u8 flags = data[4];
     bool padded = flags & 0x08;
     u8 hdr_len = (padded) ? 10 : 9;
+
+    *frame = _new_h2_frame(data, type, flags);
 
     bpf_debug("Parsing HTTP/2 buf with length %d, type %d, flags %d", len, type, flags);
 

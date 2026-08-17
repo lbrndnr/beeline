@@ -81,11 +81,12 @@ __noinline int extract_h2_match(const struct sk_msg_md *msg, const struct parse_
 	return ret;
 }
 
-__noinline int parse_h2(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
+__noinline int parse_h2(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull) {
     int ret = 0;
 
 	__sink(msg);
 	__sink(pres);
+	__sink(frame);
 	__sink(ret);
 
 	bpf_msg_pull_data(msg, 0, msg->size, 0);
@@ -122,7 +123,8 @@ int msg_verdict(struct sk_msg_md *msg) {
     struct parse_res pres = { 0 };
 
     if (is_h2) {
-        msg_len = parse_h2(msg, &pres);
+        struct h2_frame frame = { 0 };
+        msg_len = parse_h2(msg, &pres, &frame);
         if (msg_len < 0) {
             bpf_error("Failed to parse h2 message: %s", msg->data);
             return SK_PASS;

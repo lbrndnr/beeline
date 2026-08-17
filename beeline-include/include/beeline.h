@@ -49,6 +49,13 @@ struct parse_res {
     struct hdr_match ms[MAX_MATCHES];
 };
 
+// The header of the HTTP/2 frame a parsed message starts with.
+struct h2_frame {
+    u32 sid;
+    u8 type;
+    u8 flags;
+};
+
 struct trans {
     u16 state;
     u16 action;

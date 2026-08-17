@@ -468,6 +468,7 @@ dependencies = [
  "beeline",
  "beeline-include",
  "bpf-tracing",
+ "httlib-huffman",
  "libbpf-cargo",
  "libbpf-rs",
  "libc",

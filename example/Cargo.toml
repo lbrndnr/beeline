@@ -12,6 +12,7 @@ keywords.workspace = true
 axum = { version = "0.8.9", features = ["http2"] }
 beeline = { path = "../beeline", features = ["h1", "h2"] }
 tokio = { version = "1.52", features = ["full"] }
+httlib-huffman = "0.3.4"
 bpf-tracing = "0.0.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
