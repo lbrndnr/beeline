@@ -9,7 +9,7 @@ as-bytes = "0.2.0"
 axum = { version = "0.8.9", features = ["http2"] }
 beeline = { path = "../beeline", features = ["h1", "h2"] }
 bytes = "1.11.1"
-libbpf-rs = "0.26.2"
+libbpf-rs = "0.27.0"
 libc = "0.2.186"
 tokio = { version = "1.52", features = ["full"] }
 bpf-tracing = "0.0.5"
