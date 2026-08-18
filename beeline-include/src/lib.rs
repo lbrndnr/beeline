@@ -16,6 +16,6 @@ pub fn clang_args() -> Result<Vec<OsString>, ParseLevelFilterError> {
 #[inline]
 pub fn include_path_root() -> OsString {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("include");
-    println!("cargo:rerun-if-changed={:?}", path);
+    println!("cargo:rerun-if-changed={}", path.display());
     OsString::from(path)
 }

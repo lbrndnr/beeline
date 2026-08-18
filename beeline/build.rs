@@ -4,7 +4,7 @@ use std::{env, ffi::OsString, fs, path::PathBuf};
 fn build_and_generate(dir: &PathBuf) {
     let last_path_comp = dir.iter().last().unwrap().to_str().unwrap();
     let src = dir.clone().join("parser.bpf.c");
-    println!("cargo:rerun-if-changed={src:?}");
+    println!("cargo:rerun-if-changed={}", src.display());
 
     let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script");
     let out_dir = PathBuf::from(&out_dir).join(last_path_comp);
@@ -36,5 +36,5 @@ fn main() {
         .join("..")
         .join("include")
         .join("beeline.h");
-    println!("cargo:rerun-if-env-changed={hdr:?}");
+    println!("cargo:rerun-if-changed={}", hdr.display());
 }
