@@ -1,3 +1,5 @@
+//! An HTTP echo server the integration tests send their requests to.
+
 use std::net::SocketAddr;
 
 use anyhow::Result;
@@ -10,6 +12,9 @@ use axum::{
 };
 use tracing::debug;
 
+/// Answers a request with its own headers and body.
+///
+/// Responds with `400 Bad Request` if the body is not valid UTF-8.
 async fn echo(headers: HeaderMap, body: Bytes) -> Result<impl IntoResponse, StatusCode> {
     if let Ok(body) = String::from_utf8(body.to_vec()) {
         debug!(

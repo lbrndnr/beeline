@@ -20,9 +20,18 @@ use xbpf::libbpf::{
 
 extern crate plain;
 
+/// A parser for HTTP/2 messages.
+///
+/// The builder methods configure which fields the parser captures and which
+/// functions of the target program it replaces. Nothing is loaded into the
+/// kernel until [`Parser::attach`] is called.
 pub struct Parser {
+    /// The state every pattern is anchored at. A field name may appear in any
+    /// header block, so there is no equivalent to the request line of HTTP/1.x
+    /// to anchor a pattern at.
     s_any: u16,
 
+    /// The patterns configured so far, compiled into a DFA.
     dfa: Dfa,
 
     parse_msg_fn: Option<String>,
@@ -34,6 +43,11 @@ pub struct Parser {
 
 xbpf::include_bpf!("h2/parser");
 
+/// Encodes a transition the way the BPF parser reads it out of its transition
+/// table.
+///
+/// An action is a bit field: the flag identifying the action occupies the high
+/// bits, the capture id the low ones.
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {
         Action::CaptureFieldValue(cid) => rodata.a_start_capture | (cid as u16) & rodata.a_id_mask,
@@ -75,11 +89,23 @@ impl Parser {
         self
     }
 
+    /// Specifies the function template in the target program to be replaced with a parser
+    /// reading from a `sk_buff`. The function will not be replaced until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `parse_fn` - The name of the function to replace in the target program
     pub fn replace_parse_skb<S: ToString>(mut self, parse_fn: S) -> Parser {
         self.parse_skb_fn = Some(parse_fn.to_string());
         self
     }
 
+    /// Specifies the function template in the target program to be replaced with a parser
+    /// reading from a dynptr. The function will not be replaced until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `parse_fn` - The name of the function to replace in the target program
     pub fn replace_parse_buf<S: ToString>(mut self, parse_fn: S) -> Parser {
         self.parse_buf_fn = Some(parse_fn.to_string());
         self
@@ -107,15 +133,21 @@ impl Parser {
         self
     }
 
-    /// Configures the parser to capture an HTTP/2 header field value.
+    /// Configures the parser to capture the value of a header field.
+    ///
+    /// The field name is matched in its Huffman encoded form, which is how
+    /// HPACK puts it on the wire. Fields the peer replaced with an index into
+    /// the static or the dynamic table are matched against the entry the index
+    /// resolves to. Pseudo-headers are addressed without their leading colon,
+    /// see [`crate::header`].
     ///
     /// # Arguments
     ///
-    /// * `name` - The HTTP/2 header name to capture
+    /// * `name` - The header name whose value to capture
     ///
     /// # Errors
     ///
-    /// Returns an error if the pattern configuration fails.
+    /// Returns an error if `name` cannot be Huffman encoded.
     pub fn capture_hdr(mut self, name: &HeaderName) -> Result<Parser> {
         let mut name_encoded = Vec::new();
         huffman::encode(name.as_str().as_bytes(), &mut name_encoded)?;
@@ -128,6 +160,13 @@ impl Parser {
         Ok(self)
     }
 
+    /// Fills `static_table` with the Huffman encoded entries of the HPACK
+    /// static table and freezes it, so that the parser can resolve the fields a
+    /// peer refers to by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an entry cannot be encoded or written to the map.
     fn populate_static_table(&self, static_table: &MapHandle) -> Result<()> {
         let insert = |idx: u32, key: &str, val: Option<&str>| {
             let mut hf_key = Vec::new();
@@ -174,21 +213,21 @@ impl Parser {
         Ok(())
     }
 
-    /// Attaches the configured parser to the target program.
+    /// Loads the configured parser and attaches it to the target program.
+    ///
+    /// Every function configured with one of the `replace_*` methods is
+    /// replaced in the target program, the remaining parser programs are left
+    /// unloaded. Loading the parser also populates the HPACK static table.
     ///
     /// # Arguments
     ///
     /// * `target` - The file descriptor of the target program to attach to
     ///
-    /// # Returns
-    ///
-    /// A tuple of optional Links for (parse, matched, extract) functions. Each Link is
-    /// `Some` if the corresponding function was configured via `replace_*` methods,
-    /// or `None` otherwise.
-    ///
     /// # Errors
     ///
-    /// Returns an error if attachment to the target program fails.
+    /// Returns an error if the parser cannot be loaded, or if one of the
+    /// functions it should replace does not exist in the target program with a
+    /// matching signature.
     pub fn attach<'obj>(self, target: i32) -> Result<AttachedParser> {
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
@@ -246,6 +285,9 @@ impl Parser {
         })
     }
 
+    /// Writes the transition table of the DFA into the read-only data of the
+    /// parser program. This has to happen before the program is loaded, as the
+    /// kernel freezes the section afterwards.
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
         for (from, to, input, action) in self.dfa.iter_transitions() {
             let s = *from as usize;
@@ -258,25 +300,55 @@ impl Parser {
     }
 }
 
+/// A [`Parser`] attached to a target program.
+///
+/// It owns the links of the attached programs, so the target program keeps its
+/// parser for as long as this value is alive.
 pub struct AttachedParser {
+    /// The map holding the state of the dynamic table of every connection the
+    /// parser has seen a header block on.
     dynamic_table_info: MapHandle,
 
     #[allow(dead_code)]
     links: Vec<Link>,
 }
 
+/// The state of the dynamic table the parser mirrors for a connection.
+///
+/// This is mostly useful to assert that the kernel side stayed in sync with the
+/// peer's own table.
 #[repr(C)]
 #[derive(Default, Clone)]
 pub struct DynamicTableInfo {
+    /// The number of entries currently in the table.
     pub count: u32,
+
+    /// The size of those entries, as defined by section 4.1 of RFC 7541.
     pub size: u32,
+
+    /// The maximum size the peer announced, either as the initial value or with
+    /// a `SETTINGS_HEADER_TABLE_SIZE` setting.
     pub max_size: u32,
+
+    /// The number of entries evicted so far. Together with `count` it turns an
+    /// HPACK index into an index into the table.
     pub deleted: u32,
 }
 
 unsafe impl Plain for DynamicTableInfo {}
 
 impl AttachedParser {
+    /// Returns the state of the dynamic table the parser keeps for the
+    /// connection between `local` and `remote`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parser has not seen a header block on that
+    /// connection yet, or if the map cannot be read.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either address is an IPv6 address.
     pub fn dynamic_table_info(
         &self,
         local: SocketAddr,

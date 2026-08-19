@@ -1,3 +1,9 @@
+//! A BPF program the integration tests attach a parser to.
+//!
+//! It parses every message on a connection to the server under test and stores
+//! the captured ranges in a map, so that a test can assert on them from user
+//! space.
+
 #![allow(unused_imports)]
 
 use anyhow::Result;
@@ -26,10 +32,16 @@ xbpf::include_bpf!("prog");
 /// server, responses upstream to the client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
+    /// The requests the server receives.
     Downstream,
+
+    /// The responses the server sends.
     Upstream,
 }
 
+/// The test program, attached to a socket map and a cgroup.
+///
+/// It stays attached until it is dropped.
 pub struct TestProgram<'obj> {
     skel: ProgSkel<'obj>,
     #[allow(dead_code)]
@@ -41,6 +53,13 @@ unsafe impl<'obj> Send for TestProgram<'obj> {}
 unsafe impl<'obj> Sync for TestProgram<'obj> {}
 
 impl<'obj> TestProgram<'obj> {
+    /// Loads the test program and attaches it to every socket connected to
+    /// `address`, parsing the messages travelling in `direction`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `address` is not an IPv4 address, or if the program
+    /// cannot be loaded or attached.
     pub fn attach<A: ToSocketAddrs>(
         address: A,
         open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
@@ -91,6 +110,8 @@ impl<'obj> TestProgram<'obj> {
         Ok(Self { sockops, skel })
     }
 
+    /// Returns the number of connections that were upgraded to HTTP/2, i.e. the
+    /// number of times the program matched the HTTP/2 preface.
     pub fn num_upgraded_conns(&self) -> Result<u32> {
         let func = &self.skel.progs.get_num_upgraded_conns;
         let input = ProgramInput::default();
@@ -98,6 +119,8 @@ impl<'obj> TestProgram<'obj> {
         Ok(func.test_run(input)?.return_value)
     }
 
+    /// Returns the range captured for the match `idx` in the last parsed
+    /// message, or `None` if the parser did not capture one.
     pub fn get_match(&self, idx: usize) -> Result<Option<Vec<u8>>> {
         let id = self.skel.maps.matches.info()?.info.id;
         let map = MapHandle::from_map_id(id)?;
@@ -114,6 +137,7 @@ impl<'obj> TestProgram<'obj> {
         }
     }
 
+    /// Returns the file descriptor of the program a parser attaches to.
     pub fn prog_fd(&self) -> i32 {
         self.skel.progs.msg_verdict.as_fd().as_raw_fd()
     }

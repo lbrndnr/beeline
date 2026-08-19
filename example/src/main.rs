@@ -1,3 +1,9 @@
+//! A static file server whose requests are answered from the kernel.
+//!
+//! The server itself is an ordinary axum application. [`fastpath::Server`]
+//! attaches a Beeline parser to its sockets, which answers the requests for the
+//! files listed in `routes` before they ever reach user space.
+
 use axum::http::StatusCode;
 use fastpath::Server;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};

@@ -3,16 +3,32 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
+// The interface between a BPF program and the parsers beeline attaches to it:
+// the types a parser reports its results in, and the macros declaring the
+// functions it replaces.
+
 #ifndef __BEELINE_H__
 #define __BEELINE_H__
 
 char LICENSE[] SEC("license") = "GPL";
 
 // these restrictions are needed to make the verifier happy
+
+// The number of bytes a parser walks at most. Bounding the length of a message
+// bounds the parsing loop.
 #define MAX_BYTES 0x7FFF
+
+// The number of matches a `parse_res` holds, i.e. the number of ranges a parser
+// can be configured to capture.
 #define MAX_MATCHES 32
+
+// Masks a match id down to a valid index into `parse_res`, so that the verifier
+// can see that the access is in bounds.
 #define MAX_MATCH_MASK 31
 
+// Clamps VAR into [UMIN, UMAX]. It is written in inline assembly so that clang
+// cannot reason the bounds away again, which would leave the verifier without a
+// range for VAR.
 #ifndef bpf_clamp_uminmax
 #define bpf_clamp_uminmax(VAR, UMIN, UMAX)                                                         \
     asm volatile("if %0 >= %[min] goto +2\n"                                                       \
@@ -24,27 +40,41 @@ char LICENSE[] SEC("license") = "GPL";
                  : [min] "i"(UMIN), [max] "i"(UMAX))
 #endif
 
+// An IPv4 endpoint. `ip4` is stored the way the kernel hands it out, in network
+// byte order, `port` in host byte order.
 struct ip4_addr {
     u32 ip4;
     u32 port;
 };
 
+// The pair of endpoints identifying a connection. Beeline keys the state it
+// keeps per connection with it, e.g. the dynamic table of an HTTP/2 peer.
 struct ip4_conn {
     struct ip4_addr local;
     struct ip4_addr remote;
 };
 
+// A single captured header field. If `in_msg` is set, `idx` is the offset of
+// the field in the parsed message and `len` its length. Otherwise the field was
+// not spelled out on the wire and `idx` is the HPACK index it has to be read
+// from the static or the dynamic table with.
 struct hdr_match {
     u16 idx;
     u16 len;
     bool in_msg;
 };
 
+// A borrowed string, pointing either into the parsed message or into one of the
+// HPACK tables. It is only valid for as long as the program does not invalidate
+// the pointers of the message it was extracted from.
 struct hdr_str {
     u32 len;
     const u8* ptr;
 };
 
+// The result of parsing a single message, holding one entry per match id the
+// parser was configured with. It is what `matched` and `extract_match` read the
+// captured ranges out of.
 struct parse_res {
     struct hdr_match ms[MAX_MATCHES];
 };
@@ -56,6 +86,9 @@ struct h2_frame {
     u8 flags;
 };
 
+// A single transition of the DFA a parser walks: the state it leads to, and the
+// action to run upon entering that state. The action is a bit field, see the
+// `a_*` constants of the parser programs for its encoding.
 struct trans {
     u16 state;
     u16 action;

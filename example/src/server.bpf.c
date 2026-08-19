@@ -5,6 +5,11 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
+// The fast path of the example server. It parses the requests arriving on the
+// server's sockets and answers the ones it has a pre-rendered response for
+// right here, without ever waking up user space.
+
+// The client sockets of the server, i.e. the ones `msg_verdict` runs on.
 struct {
     __uint(type, BPF_MAP_TYPE_SOCKHASH);
     __uint(max_entries, 16384);
@@ -12,6 +17,7 @@ struct {
     __type(value, int);
 } sock_map SEC(".maps");
 
+// The address of the server, set by user space before the program is loaded.
 volatile const u32 ip4;
 volatile const u32 port;
 
@@ -22,6 +28,8 @@ volatile const u32 port;
 #define MAX_ROUTE_PATH 64
 #define MAX_ROUTE_BODY 4096
 
+// The matches the parser is configured with, in the order in which user space
+// captures them.
 #define H1_PATH_MID 0
 #define H1_CONTENT_LENGTH_MID 1
 
@@ -38,9 +46,8 @@ struct route_key {
     u8 path[MAX_ROUTE_PATH];
 };
 
-// Maps a request path to its index in `routes`. A route is reachable under
-// several paths, the plain text one and the huffman encoded one h2 puts on the
-// wire, hence the two entries per route.
+// Maps a request path to its index in `routes`. Populated by userspace once the
+// program is loaded, as a hash map only exists from then on.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, MAX_ROUTES);
@@ -48,13 +55,13 @@ struct {
     __type(value, u8);
 } route_idx SEC(".maps");
 
+// The functions beeline replaces with an HTTP/1.1 parser.
 BEELINE_EXTRACT_MATCH(extract_h1_match)
 BEELINE_H1_PARSE_MSG(parse_h1)
 
 // Overwrites `msg` in place with `r`'s pre-rendered response and redirects it
 // straight back to the sender's socket (BPF_F_INGRESS), bypassing userspace
-// entirely. `sid` is the h2 stream to answer on, or 0 to serve the HTTP/1.1
-// rendering. Returns 0 on success, < 0 if the response could not be served.
+// entirely. Returns 0 on success, < 0 if the response could not be served.
 static __always_inline int serve_route(struct sk_msg_md *msg, struct ip4_conn *ikey, struct route *r) {
     u32 body_len = r->body_len;
     if (body_len == 0 || body_len > MAX_ROUTE_BODY) return -1;
@@ -116,6 +123,9 @@ static __always_inline int try_serve_route(struct sk_msg_md *msg, struct ip4_con
     return serve_route(msg, ikey, &routes[i]);
 }
 
+// Returns the value of the captured `Content-Length` header, or -1 if it is
+// empty or not a number. It is what tells the fast path how far the body of a
+// request reaches, as the parser itself stops at the end of the header block.
 static __always_inline int parse_content_length(const struct hdr_str *content_length) {
     char digits[16] = { 0 };
     u32 n = content_length->len;
@@ -133,9 +143,12 @@ static __always_inline int parse_content_length(const struct hdr_str *content_le
     return -1;
 }
 
+// Parses the request the message carries and serves it from the fast path if it
+// asks for one of the pre-rendered routes. Anything else is passed on to the
+// user space server.
 SEC("sk_msg")
 int msg_verdict(struct sk_msg_md *msg) {
-    // socket identifeir of the ingress connection
+    // socket identifier of the ingress connection
     struct ip4_conn ikey = {
         .local = {
             .ip4 = msg->local_ip4,
@@ -187,6 +200,8 @@ int msg_verdict(struct sk_msg_md *msg) {
     return SK_PASS;
 }
 
+// Adds every socket connected to the server to `sock_map`, so that
+// `msg_verdict` sees the requests travelling on them.
 SEC("sockops")
 int monitor_sockets(struct bpf_sock_ops *ops) {
     if (ops->op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB || ops->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {

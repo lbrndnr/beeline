@@ -34,6 +34,12 @@ const MAX_ROUTES: usize = 16;
 const MAX_ROUTE_PATH: usize = 64;
 const MAX_ROUTE_BODY: usize = 4096;
 
+/// The fast path of the example server.
+///
+/// It parses the requests arriving on the server's sockets with an HTTP/1.1
+/// parser and answers the ones whose path it has a pre-rendered response for
+/// straight from the kernel. Everything else is passed on to the user space
+/// server. The fast path stays attached until this value is dropped.
 pub struct Server<'obj> {
     #[allow(dead_code)]
     skel: ServerSkel<'obj>,
@@ -47,6 +53,8 @@ unsafe impl<'obj> Send for Server<'obj> {}
 
 unsafe impl<'obj> Sync for Server<'obj> {}
 
+/// Returns the value of the `Content-Type` header to serve `file` with, based
+/// on its extension.
 fn content_type(file: &Path) -> &'static str {
     match file.extension().and_then(|ext| ext.to_str()) {
         Some("html") => "text/html; charset=utf-8",

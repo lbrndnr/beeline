@@ -3,6 +3,15 @@
 #include "xbpf.h"
 #include <bpf/bpf_helpers.h>
 
+// The parser for HTTP/2 messages. It decodes the HPACK representation of a
+// header block far enough to find the field names and values, matches the names
+// against the DFA user space injected into `s2ts`, and mirrors the peer's
+// dynamic table so that fields which are only referenced by index can be
+// resolved as well.
+
+// The part of a header field the parser is currently reading. HPACK encodes a
+// field as a sequence of integers and strings, and the parser needs to know
+// which one it is looking at to interpret the bytes it reads.
 enum h2_parse_state {
     // integers
     H2_IDX = 0,
@@ -14,12 +23,20 @@ enum h2_parse_state {
     H2_VAL = 4,
 };
 
+// Whether the parser is reading a string rather than an integer.
 #define PS_IS_STR(ps) (ps > H2_VAL_LEN)
+
+// The state reading the string a length integer announces.
 #define PS_LEN_TO_STR(ps) (ps + 2)
 
+// The number of bytes of a name or a value that are kept in a table entry.
+// Longer fields are truncated, which bounds the copies for the verifier.
 #define HEADER_FIELD_MAXLEN 128
 #define HEADER_FIELD_MASK (HEADER_FIELD_MAXLEN - 1)
 
+// An entry of one of the HPACK tables. Both name and value are stored Huffman
+// encoded, i.e. the way they appear on the wire, so that matching them against
+// the DFA does not require decoding them first.
 struct header_field {
     u8 key[HEADER_FIELD_MAXLEN];
     u8 key_len;
@@ -27,9 +44,15 @@ struct header_field {
     u8 val_len;
 };
 
+// The number of entries of the HPACK static table, see appendix A of RFC 7541.
 #define STATIC_TABLE_SIZE 61
+
+// The identifier of the SETTINGS parameter announcing the size of the dynamic
+// table.
 #define SETTINGS_HEADER_TABLE_SIZE 0x1
 
+// The HPACK static table. User space populates and freezes it when the parser
+// is attached.
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, STATIC_TABLE_SIZE+1);
@@ -37,16 +60,21 @@ struct {
     __type(value, struct header_field);
 } static_table SEC(".maps");
 
+// The dynamic table is per connection, and its entries are addressed by the
+// order in which they were added.
 struct dynamic_table_key {
     struct ip4_conn conn;
     u32 idx;
 };
 
+// An entry of the dynamic table, along with the size it accounts for in the
+// table, which is computed from the decoded lengths of its name and value.
 struct dynamic_table_entry {
     struct header_field field;
     u32 size;
 };
 
+// The dynamic table of every connection the parser has seen a header block on.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
@@ -54,6 +82,8 @@ struct {
 	__type(value, struct dynamic_table_entry);
 } dynamic_table SEC(".maps");
 
+// Scratch space for the entry that is being added to the dynamic table. An
+// entry is far too large for the stack the verifier allows.
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 1);
@@ -61,6 +91,9 @@ struct {
     __type(value, struct dynamic_table_entry);
 } dynamic_table_entry SEC(".maps");
 
+// The state of the dynamic table of a connection. `deleted` counts the entries
+// that were evicted, which is what turns an HPACK index, counted from the most
+// recently added entry, into the index an entry is stored under.
 struct dynamic_table_info {
     u32 count;
     u32 size;
@@ -75,21 +108,37 @@ struct {
 	__type(value, struct dynamic_table_info);
 } dynamic_table_info SEC(".maps");
 
+// Parsing is complete, the rest of the message is not a header anymore.
 const u16 a_done = 1 << 14;
+
+// The value of the field whose name the DFA just matched is to be captured
+// under the id in the low bits.
 const u16 a_start_capture = 1 << 13;
+
+// Unused: HPACK announces the length of a value, so the parser never has to
+// match its end.
 const u16 a_end_capture = 1 << 12;
+
 const u16 a_id_mask = 0x0FFF;
 
+// The state every pattern is anchored at. A field name can appear in any header
+// block, so all patterns start here.
 const u16 s_any = 0;
 
 // these restrictions are needed to make the verifier happy
 #define MAX_STATES 256
 #define MAX_TRANS 256
 
+// The transition table of the DFA, indexed by state and input byte. User space
+// fills it in before the program is loaded, after which it is read-only.
 volatile const struct trans s2ts[MAX_STATES][MAX_TRANS];
 
+// The length of the longest code of the HPACK Huffman code.
 #define HPACK_HUFF_MAXLEN 30
 
+// The HPACK Huffman code of appendix B of RFC 7541, flattened into the number
+// of symbols per code length and the first code of each length. That is enough
+// to tell where a code ends, which is all the parser needs.
 static const u8 huff_count[HPACK_HUFF_MAXLEN + 2] = {
     0, 0, 0, 0, 0, 10, 26, 32, 6, 0, 5, 3, 2, 6, 2, 3,
     0, 0, 0, 3, 8, 13, 26, 29, 12, 4, 15, 19, 29, 0, 4, 0
@@ -101,6 +150,9 @@ static const u32 huff_first_code[HPACK_HUFF_MAXLEN + 2] = {
     33554412, 67108832, 134217694, 268435426, 536870910, 1073741820, 0
 };
 
+// Consumes bit `b` of `c`. Once the bits read so far form a valid code, a
+// symbol is counted and the next code starts. A run that grows past the longest
+// code is the EOS padding of the last byte and is dropped.
 #define HPACK_HUFF_STEP(c, b) do {                              \
     code = (code << 1) | (((c) >> (b)) & 1u);                   \
     len++;                                                      \
@@ -118,6 +170,9 @@ static const u32 huff_first_code[HPACK_HUFF_MAXLEN + 2] = {
     }                                                              \
 } while (0)
 
+// Returns the number of characters the Huffman encoded `src` decodes to. HPACK
+// sizes a table entry by the decoded length of its name and value, so the
+// mirrored table can only be evicted in step with the peer's if this is known.
 static __always_inline u32 hpack_huffman_decoded_len(const u8 *src, u16 src__sz) {
     u32 code = 0, len = 0, n = 0;
     u32 i = 0;
@@ -137,6 +192,9 @@ static __always_inline u32 hpack_huffman_decoded_len(const u8 *src, u16 src__sz)
     return n;
 }
 
+// Everything the parser needs of the message it walks, no matter whether that
+// message came in as an sk_msg, an sk_buff or a dynptr: the bytes to parse and
+// the connection they belong to, which is what keys the dynamic table.
 struct msg_ctx {
     u8 *data;
     u8 *data_end;
@@ -154,6 +212,7 @@ static __always_inline struct h2_frame _new_h2_frame(const u8 *data, u8 type, u8
     };
 }
 
+// Builds the parse context of an sk_msg.
 static __always_inline struct msg_ctx _new_msg_ctx(const struct sk_msg_md *msg) {
     return (struct msg_ctx) {
         .data = msg->data,
@@ -171,6 +230,7 @@ static __always_inline struct msg_ctx _new_msg_ctx(const struct sk_msg_md *msg) 
     };
 }
 
+// Builds the parse context of an sk_buff.
 static __always_inline struct msg_ctx _new_skb_ctx(const struct __sk_buff *skb) {
     return (struct msg_ctx) {
         .data = (u8 *)(long)skb->data,
@@ -188,6 +248,7 @@ static __always_inline struct msg_ctx _new_skb_ctx(const struct __sk_buff *skb) 
     };
 }
 
+// Builds the key the `idx`th entry of `conn`'s dynamic table is stored under.
 static __always_inline struct dynamic_table_key _new_dynamic_table_key(const struct ip4_conn *conn, u32 idx) {
     return (struct dynamic_table_key) {
         .conn = *conn,
@@ -195,11 +256,17 @@ static __always_inline struct dynamic_table_key _new_dynamic_table_key(const str
     };
 }
 
+// Translates the HPACK index `idx`, which counts backwards from the entry that
+// was added last, into the index the entry is stored under.
 static __always_inline u32 _get_dynamic_table_index(const struct dynamic_table_info *dt_info __arg_nonnull, u32 idx) {
     u32 end_idx = STATIC_TABLE_SIZE + dt_info->count + dt_info->deleted;
     return (end_idx - idx) + STATIC_TABLE_SIZE;
 }
 
+// Resolves the match `m` into the bytes it refers to, either in the message
+// itself or, if the peer only referenced the field by index, in the static or
+// the dynamic table. `is_key` selects the name of a table entry over its value.
+// `*out` is left untouched if the match cannot be resolved.
 static __always_inline void _extract_match(const struct msg_ctx *ctx, const struct hdr_match *m, bool is_key, u8 **out, u32 *len) {
     if (m->in_msg) {
         if (ctx->data + m->idx + m->len > ctx->data_end) return;
@@ -234,6 +301,9 @@ static __always_inline void _extract_match(const struct msg_ctx *ctx, const stru
     }
 }
 
+// Follows the transition `input` takes out of `state`. A state that has no
+// transition for `input` falls back to the one matching any byte, and if it has
+// none either, back to `s_any`.
 static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *action) {
     state &= 0xFF;
     input &= 0xFF;
@@ -252,10 +322,23 @@ static __always_inline void _next(u16 state, u8 input, u16 *next_state, u16 *act
     *action = t.action;
 }
 
+// The number of bits the first byte of a field representation carries the
+// integer in, indexed by its top nibble. It is what identifies the
+// representation as well: 7 bits for an indexed field, 6 for a literal that is
+// added to the dynamic table, 5 for a table size update and 4 for a literal
+// that is not indexed.
 static const u8 hpack_prefix_len[16] = {
     4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7
 };
 
+// Moves on to the part of the field that follows the one that just ended, `c`
+// being its first byte. `n` is set to the prefix length of the integer to read
+// next, `j` to the number of bytes still to read and `k` is cleared, ready to
+// take the next integer.
+//
+// A field is either fully indexed, in which case the next byte starts a new
+// field, or it spells out its value, and possibly its name, which is what the
+// index of 0 and the representations with a 6 or 4 bit prefix indicate.
 static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnull, u32 *n __arg_nonnull, u32 *k __arg_nonnull, u8 *j __arg_nonnull) {
     if (*ps == H2_KEY_LEN || *ps == H2_VAL_LEN) {
         *ps = PS_LEN_TO_STR(*ps);
@@ -283,6 +366,16 @@ static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnu
     return 0;
 }
 
+// Feeds the byte `c` to the HPACK decoder. `ps` is the part of the field being
+// read, `k` the integer that is being accumulated, i.e. an index or the length
+// of a string, `n` the number of bits its first byte carries and `m` the shift
+// of the continuation byte to come. `j` counts the bytes still to read, which
+// for an integer is only ever 0 or 1, as its continuation is announced by the
+// top bit of every byte.
+//
+// A caller that finds `j` back at 0 with `ps` at an integer state has just read
+// the last byte of that integer, and one that finds `ps` at a string state has
+// just read a byte of the string.
 static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, u32 *m, u32 *k, u8 *j) {
     if (*j > 0) {
         if (PS_IS_STR(*ps)) {
@@ -307,6 +400,8 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
     }
 }
 
+// Looks up the oldest entry of the dynamic table, i.e. the one HPACK evicts
+// first. `*entry` is NULL if the table is empty.
 static __always_inline void _get_lru_dynamic_table_entry(const struct ip4_conn *conn __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, struct dynamic_table_entry **entry) {
     u32 end_idx = STATIC_TABLE_SIZE + dt_info->deleted;
     bpf_trace("dt: getting LRU entry at index %d", end_idx);
@@ -314,6 +409,9 @@ static __always_inline void _get_lru_dynamic_table_entry(const struct ip4_conn *
     *entry = bpf_map_lookup_elem(&dynamic_table, &key);
 }
 
+// Looks up the field the HPACK index `idx` refers to, in the static table if it
+// is one of the first `STATIC_TABLE_SIZE` indices and in the dynamic table of
+// `conn` otherwise. `*hf` is NULL if there is no such entry.
 static __always_inline void _get_table_entry(const struct ip4_conn *conn __arg_nonnull, const struct dynamic_table_info *dt_info __arg_nonnull, u32 idx, struct header_field **hf) {
     if (idx > STATIC_TABLE_SIZE) {
         u32 dt_idx = _get_dynamic_table_index(dt_info, idx);
@@ -330,6 +428,9 @@ static __always_inline void _get_table_entry(const struct ip4_conn *conn __arg_n
     }
 }
 
+// Walks the DFA over `key`, the Huffman encoded name of a field the peer only
+// referenced by index, and returns the id of the capture it matched, or -1 if
+// the name matches no pattern. `s` is left in the state the walk ended in.
 static __always_inline s8 _match_header_key(const u8 *key __arg_nonnull, u16 key__sz, u16 *s __arg_nonnull) {
     u8 j = 0;
     u16 a = 0;
@@ -346,6 +447,9 @@ static __always_inline s8 _match_header_key(const u8 *key __arg_nonnull, u16 key
     return -1;
 }
 
+// Returns the state of `conn`'s dynamic table, creating an empty table with the
+// default maximum size of RFC 7540 if this is the first header block seen on
+// the connection. Returns NULL if the table could not be created.
 static __always_inline struct dynamic_table_info* _get_dynamic_table(const struct ip4_conn *conn __arg_nonnull) {
     struct dynamic_table_info *info = bpf_map_lookup_elem(&dynamic_table_info, conn);
     if (info) return info;
@@ -391,6 +495,13 @@ __noinline __weak u32 _try_evict_dynamic_table_entries(const struct msg_ctx *ctx
     return freed;
 }
 
+// Adds the field made up of `key` and `val` to the dynamic table, evicting as
+// many of the oldest entries as it takes to make room for it. Both matches are
+// resolved first, as either of them may refer to an entry of a table rather
+// than to the message itself.
+//
+// Returns 0 if the entry was added, -1 if it could not be resolved or does not
+// fit into the table even when emptied, in which case the peer drops it too.
 __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, const struct hdr_match *key __arg_nonnull, const struct hdr_match *val __arg_nonnull) {
     u8 *key_ptr = NULL;
     u32 key_len = 0;
@@ -441,6 +552,10 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
     return 0;
 }
 
+// Reads the settings of a SETTINGS frame, which are 6 bytes each, and applies
+// the ones that resize the dynamic table. Returns the offset it stopped at.
+//
+// See `_parse_hdr_from` for `start`, `end` and `null_prefix`.
 static __always_inline int _parse_stg_from(const struct msg_ctx *ctx, u16 start, u16 end, u16 *s, struct parse_res *pres, u16 *null_prefix) {
     const u8 *data = ctx->data;
     const u8 *data_end = ctx->data_end;
@@ -492,6 +607,17 @@ static __always_inline int _parse_stg_from(const struct msg_ctx *ctx, u16 start,
     return i;
 }
 
+// Decodes the header block between the offsets `start` and `end` and records
+// the values of the fields whose name matches a pattern in `pres`. Fields the
+// peer adds to its dynamic table are added to the mirrored one, so that later
+// blocks can resolve the indices referring to them. `s` is the state the DFA
+// walk over the field names starts in.
+//
+// `null_prefix` is the length of the run of NUL bytes at the beginning of the
+// buffer that is to be skipped rather than parsed; it is updated as those bytes
+// are consumed. It may be NULL if the data cannot carry such a prefix.
+//
+// Returns the offset it stopped at.
 static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start, u16 end, u16 *s, struct parse_res *pres, u16 *null_prefix) {
     const u8 *data = ctx->data;
     const u8 *data_end = ctx->data_end;
@@ -590,11 +716,23 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
     return i;
 }
 
+// Decodes the header block carried by an sk_buff, see `_parse_hdr_from`.
 static __always_inline int _parse_skb_from(const struct __sk_buff *skb, u16 start, u16 end, u16 *s, struct parse_res *pres, u16 *null_prefix) {
     struct msg_ctx ctx = _new_skb_ctx(skb);
     return _parse_hdr_from(&ctx, start, end, s, pres, null_prefix);
 }
 
+// Parses the frame the message starts with and describes it in `frame`, so that
+// the caller can tell which stream it belongs to and where it ends. HEADERS
+// frames are decoded into `pres`, SETTINGS frames are applied to the mirrored
+// dynamic table and every other frame is skipped.
+//
+// The whole frame is pulled into the linear part of the message before it is
+// parsed. A message may carry several frames, so a caller has to keep calling
+// this until the message is consumed.
+//
+// Returns the number of bytes the frame occupies, or a negative value if the
+// message ends before the frame does.
 SEC("freplace")
 int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull) {
     u8 *data = (u8 *)(long)msg->data;
@@ -637,6 +775,9 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struc
     return res;
 }
 
+// Parses the frame the packet starts with, pulling it into the linear part of
+// the sk_buff first. Unlike `parse_msg`, this only decodes HEADERS frames. See
+// `parse_msg` for the return value.
 SEC("freplace")
 int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull, u16 *null_prefix) {
     u8 *data = (u8 *)(long)skb->data;
@@ -669,6 +810,9 @@ int parse_skb(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull, struc
     return res;
 }
 
+// Parses the frame `buf_ptr` starts with. A buffer carries no connection of its
+// own, so `conn` has to name the one it belongs to for the dynamic table to be
+// found. Only HEADERS frames are decoded. See `parse_msg` for the return value.
 SEC("freplace")
 int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull, u16 *null_prefix) {
     u8 *data = bpf_dynptr_data(buf_ptr, 0, 9);
@@ -706,6 +850,7 @@ int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct pa
     return res;
 }
 
+// Returns whether the parser captured a value for the match `idx`.
 SEC("freplace")
 bool matched(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx) {
     if (idx >= MAX_MATCHES) return false;
@@ -714,6 +859,13 @@ bool matched(const struct sk_msg_md *msg, const struct parse_res *pres __arg_non
     return (m.len > 0);
 }
 
+// Points `str` at the value captured for the match `idx`, still Huffman encoded
+// if that is how it was sent. The value points either into `msg` or into one of
+// the HPACK tables, so it is only valid until the program invalidates the data
+// pointers of the message.
+//
+// Returns 0 on success, -1 if nothing was captured for `idx` or if the value
+// can no longer be resolved.
 SEC("freplace")
 int extract_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str *str __arg_nonnull) {
     if (idx >= MAX_MATCHES) return -1;

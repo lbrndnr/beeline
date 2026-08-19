@@ -4,6 +4,12 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
+// The program the integration tests attach a parser to. It parses every message
+// travelling in the direction under test and stores what the parser captured in
+// `matches`, where the test can read it back from user space.
+
+// The connections that carried an HTTP/2 preface and are parsed as HTTP/2 from
+// then on.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
@@ -12,6 +18,7 @@ struct {
 } upgraded_conns SEC(".maps");
 u32 num_upgraded_conns = 0;
 
+// The sockets of the server under test, i.e. the ones `msg_verdict` runs on.
 struct {
     __uint(type, BPF_MAP_TYPE_SOCKHASH);
     __uint(max_entries, 16384);
@@ -19,12 +26,16 @@ struct {
     __type(value, int);
 } sock_map SEC(".maps");
 
+// The address of the server under test, set by user space before the program is
+// loaded.
 volatile const u32 ip4;
 volatile const u32 port;
 
 // parse the responses the server sends instead of the requests it receives
 volatile const bool parse_resp;
 
+// What the parser captured in the message parsed last, keyed by match id. An id
+// with nothing captured for it is absent from the map.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 32);
@@ -32,6 +43,7 @@ struct {
     __type(value, char[128]);
 } matches SEC(".maps");
 
+// The functions beeline replaces with a parser when a test attaches one.
 BEELINE_MATCHED(matched_h1)
 BEELINE_EXTRACT_MATCH(extract_h1_match)
 BEELINE_H1_PARSE_MSG(parse_h1)
@@ -39,9 +51,12 @@ BEELINE_H1_PARSE_MSG(parse_h1)
 BEELINE_EXTRACT_MATCH(extract_h2_match)
 BEELINE_H2_PARSE_MSG(parse_h2)
 
+// Parses the messages of the connection under test and records the captured
+// ranges in `matches`. A message that carries the HTTP/2 preface upgrades its
+// connection, after which its messages are parsed as HTTP/2.
 SEC("sk_msg")
 int msg_verdict(struct sk_msg_md *msg) {
-    // socket identifeir of the ingress connection
+    // socket identifier of the ingress connection
     struct ip4_conn ikey = {
         .local = {
             .ip4 = msg->local_ip4,
@@ -82,7 +97,7 @@ int msg_verdict(struct sk_msg_md *msg) {
         if (msg_len < 0) {
             // It's possible that this fails because we're actually parsing the body.
             // To avoid this, we'd have to parse the content-length to skip the body.
-            // Consolut the example to see how to do this.
+            // Consult the example to see how to do this.
             return SK_PASS;
         }
 
@@ -128,6 +143,8 @@ int msg_verdict(struct sk_msg_md *msg) {
     return SK_PASS;
 }
 
+// Adds both ends of every connection to the server under test to `sock_map`, so
+// that `msg_verdict` sees the messages travelling on them.
 SEC("sockops")
 int monitor_sockets(struct bpf_sock_ops *ops) {
     if (ops->op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB || ops->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
@@ -164,6 +181,7 @@ int monitor_sockets(struct bpf_sock_ops *ops) {
     return SK_PASS;
 }
 
+// Returns the number of connections that were upgraded to HTTP/2.
 SEC("syscall")
 int get_num_upgraded_conns() {
     return num_upgraded_conns;

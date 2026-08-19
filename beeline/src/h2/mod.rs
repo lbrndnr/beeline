@@ -1,3 +1,11 @@
+//! HTTP/2 parsing.
+//!
+//! HTTP/2 does not spell its header fields out on the wire. HPACK either
+//! replaces a field with an index into the static or the dynamic table, or
+//! Huffman encodes it. [`Parser`] therefore matches the Huffman encoded field
+//! name against its DFA and mirrors the peer's dynamic table in a BPF map, so
+//! that indexed fields can be resolved in the kernel as well.
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
@@ -6,6 +14,12 @@ mod parser;
 pub use parser::{AttachedParser, Parser, ip4_addr, ip4_conn};
 
 impl From<SocketAddr> for ip4_addr {
+    /// Converts `addr` into the address the BPF programs key their per
+    /// connection state with.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `addr` is an IPv6 address, which Beeline does not support yet.
     fn from(addr: SocketAddr) -> Self {
         match addr {
             SocketAddr::V4(addr) => ip4_addr {
@@ -17,6 +31,12 @@ impl From<SocketAddr> for ip4_addr {
     }
 }
 
+/// Returns the HPACK static table, split by whether an entry predefines a
+/// value or not.
+///
+/// The first map goes from a field name to its index, the second from a field
+/// name to the index of each of the values that are predefined for it. See
+/// appendix A of RFC 7541.
 fn create_header_maps() -> (
     HashMap<String, usize>,
     HashMap<String, HashMap<String, usize>>,
@@ -114,6 +134,11 @@ fn create_header_maps() -> (
     (headers_without_values, headers_with_values)
 }
 
+/// The action a transition of the DFA carries.
+///
+/// Unlike HTTP/1.x, a field value does not have to be delimited by matching its
+/// end: HPACK prefixes it with its length. A single action per matched field
+/// name is therefore enough.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     /// Capture a field value identified by the capture id
@@ -122,15 +147,17 @@ pub enum Action {
     /// Terminates parsing
     Done,
 
-    // No action
+    /// No action
     None,
 }
 
 impl Action {
+    /// Returns `true` if the transition carries an action.
     pub fn is_some(&self) -> bool {
         !self.is_none()
     }
 
+    /// Returns `true` if the transition carries no action.
     pub fn is_none(&self) -> bool {
         matches!(self, Action::None)
     }

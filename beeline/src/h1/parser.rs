@@ -14,9 +14,16 @@ use xbpf::libbpf::{
     skel::{OpenSkel, Skel, SkelBuilder},
 };
 
+/// The sequence terminating the lines of a message.
 const CRLF: &str = "\r\n";
 
+/// A parser for HTTP/1.x messages.
+///
+/// The builder methods configure which fields the parser captures and which
+/// functions of the target program it replaces. Nothing is loaded into the
+/// kernel until [`Parser::attach`] is called.
 pub struct Parser {
+    /// The patterns configured so far, compiled into a DFA.
     dfa: Dfa,
 
     parse_msg_fn: Option<String>,
@@ -28,6 +35,12 @@ pub struct Parser {
 
 xbpf::include_bpf!("h1/parser");
 
+/// Encodes a transition the way the BPF parser reads it out of its transition
+/// table.
+///
+/// An action is a bit field: the flags identifying the action occupy the high
+/// bits, the capture and match ids the low ones. [`Action::EndCapture`] needs
+/// both ids, so it packs the capture id above the match id.
 fn new_transition(state: StateId, action: Option<Action>, rodata: &rodata) -> trans {
     fn start(cid: CaptureId, rodata: &rodata) -> u16 {
         rodata.a_start_capture | (cid.0 as u16) & rodata.a_id_mask
@@ -79,11 +92,23 @@ impl Parser {
         self
     }
 
+    /// Specifies the function template in the target program to be replaced with a parser
+    /// reading from a `sk_buff`. The function will not be replaced until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `parse_fn` - The name of the function to replace in the target program
     pub fn replace_parse_skb<S: ToString>(mut self, parse_fn: S) -> Parser {
         self.parse_skb_fn = Some(parse_fn.to_string());
         self
     }
 
+    /// Specifies the function template in the target program to be replaced with a parser
+    /// reading from a dynptr. The function will not be replaced until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `parse_fn` - The name of the function to replace in the target program
     pub fn replace_parse_buf<S: ToString>(mut self, parse_fn: S) -> Parser {
         self.parse_buf_fn = Some(parse_fn.to_string());
         self
@@ -111,15 +136,16 @@ impl Parser {
         self
     }
 
-    /// Configures the parser to capture an HTTP/2 header field value.
+    /// Configures the parser to capture the value of a header field.
+    ///
+    /// The field is matched case insensitively and its value is captured up to
+    /// the end of the line, without the optional whitespace that may follow the
+    /// colon. [`METHOD`], [`PATH`] and [`STATUS`] are not header fields in
+    /// HTTP/1.x and are captured from the request or status line instead.
     ///
     /// # Arguments
     ///
-    /// * `name` - The HTTP/2 header name to capture
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the pattern configuration fails.
+    /// * `name` - The header name whose value to capture
     pub fn capture_hdr(mut self, name: &HeaderName) -> Parser {
         if name == &METHOD || name == &PATH {
             return self.capture_status_line_hdr(name);
@@ -149,9 +175,8 @@ impl Parser {
     /// This method sets up pattern matching for the HTTP/2 connection preface
     /// (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`), which is used to upgrade from HTTP/1.1 to HTTP/2.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the pattern configuration fails.
+    /// The preface is captured as a match, so the target program can detect the
+    /// upgrade and switch to an HTTP/2 parser for the rest of the connection.
     pub fn match_h2_preface(mut self) -> Parser {
         self.dfa
             .start_pattern(true)
@@ -163,13 +188,20 @@ impl Parser {
         self
     }
 
+    /// Configures the parser to stop at the empty line that ends the header
+    /// block, so that it never walks into the body of a message.
     fn done_on_hdr_end(mut self) -> Parser {
         self.dfa.start_pattern(false).push(CRLF).push(CRLF).done();
 
         self
     }
 
-    /// Configures the parser to match and capture HTTP request status line components.
+    /// Configures the parser to match the request line and capture the field
+    /// `name` addresses.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is neither [`METHOD`] nor [`PATH`].
     fn capture_status_line_hdr(mut self, name: &HeaderName) -> Parser {
         let methods = [
             "POST", "GET", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE",
@@ -205,7 +237,8 @@ impl Parser {
         self
     }
 
-    /// Configures the parser to match and capture HTTP response status code.
+    /// Configures the parser to match the status line of a response and capture
+    /// its status code.
     fn capture_status_code(mut self) -> Parser {
         self.dfa
             .start_pattern(true)
@@ -220,21 +253,22 @@ impl Parser {
         self
     }
 
-    /// Attaches the configured parser to the target program.
+    /// Loads the configured parser and attaches it to the target program.
+    ///
+    /// Every function configured with one of the `replace_*` methods is
+    /// replaced in the target program, the remaining parser programs are left
+    /// unloaded. The parser always stops at the end of the header block, no
+    /// matter which patterns were configured.
     ///
     /// # Arguments
     ///
     /// * `target` - The file descriptor of the target program to attach to
     ///
-    /// # Returns
-    ///
-    /// A tuple of optional Links for (parse, matched, extract) functions. Each Link is
-    /// `Some` if the corresponding function was configured via `replace_*` methods,
-    /// or `None` otherwise.
-    ///
     /// # Errors
     ///
-    /// Returns an error if attachment to the target program fails.
+    /// Returns an error if the parser cannot be loaded, or if one of the
+    /// functions it should replace does not exist in the target program with a
+    /// matching signature.
     pub fn attach<'obj>(self, target: i32) -> Result<AttachedParser> {
         let parser = self.done_on_hdr_end();
 
@@ -291,6 +325,9 @@ impl Parser {
         anyhow::Ok(AttachedParser { links })
     }
 
+    /// Writes the transition table of the DFA into the read-only data of the
+    /// parser program. This has to happen before the program is loaded, as the
+    /// kernel freezes the section afterwards.
     fn inject(&self, skel: &mut OpenParserSkel) -> Result<()> {
         for (from, to, input, action) in self.dfa.iter_transitions() {
             let s = from.0 as usize;
@@ -307,6 +344,10 @@ impl Parser {
     }
 }
 
+/// A [`Parser`] attached to a target program.
+///
+/// It owns the links of the attached programs, so the target program keeps its
+/// parser for as long as this value is alive.
 pub struct AttachedParser {
     #[allow(dead_code)]
     links: Vec<Link>,
