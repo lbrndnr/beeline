@@ -16,6 +16,7 @@ use tower_http::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod fastpath;
+mod listener;
 
 #[tokio::main]
 async fn main() {
