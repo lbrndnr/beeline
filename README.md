@@ -27,12 +27,7 @@ gRPC          | WIP     |
 To build and test Beeline, you need to install the following packages:
 
 ```bash
-sudo apt install clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-`uname -r` libbpf-dev
-```
-
-Then, generate a new `vmlinux.h` file by first installing [bpftool](https://github.com/libbpf/bpftool) from source and then run:
-```bash
-bpftool btf dump file /sys/kernel/btf/vmlinux format c > include/vmlinux.h
+sudo apt install clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-`uname -r` linux-tools-`uname -r` libbpf-dev
 ```
 
 You should now be able to compile and test Beeline as follows:
@@ -45,7 +40,7 @@ RUST_LOG=trace cargo test
 
 Once you can build Beeline, you can also run the example. It is a simple HTTP server, with Beeline attached to it. It will serve some static files directly from the kernel. To run it, first start the server:
 ```bash
-RUST_LOG=debug cargo run --bin example
+cargo run --bin example
 ```
 
 Then, in another terminal, make a request to the server:
