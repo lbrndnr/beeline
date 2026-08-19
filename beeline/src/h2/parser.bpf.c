@@ -31,18 +31,11 @@ enum h2_parse_state {
 
 // The number of bytes of a name or a value that are kept in a table entry.
 // Longer fields are truncated, which bounds the copies for the verifier.
-#define HEADER_FIELD_MAXLEN 128
+// `header_field`, which both tables are made of, is declared in beeline.h so
+// that a target program reading dynamic table entries with
+// `BEELINE_H2_GET_DT_ENTRY` agrees on its layout.
+#define HEADER_FIELD_MAXLEN BEELINE_H2_FIELD_MAXLEN
 #define HEADER_FIELD_MASK (HEADER_FIELD_MAXLEN - 1)
-
-// An entry of one of the HPACK tables. Both name and value are stored Huffman
-// encoded, i.e. the way they appear on the wire, so that matching them against
-// the DFA does not require decoding them first.
-struct header_field {
-    u8 key[HEADER_FIELD_MAXLEN];
-    u8 key_len;
-    u8 val[HEADER_FIELD_MAXLEN];
-    u8 val_len;
-};
 
 // The number of entries of the HPACK static table, see appendix A of RFC 7541.
 #define STATIC_TABLE_SIZE 61
@@ -770,6 +763,12 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struc
         res = _parse_stg_from(&ctx, hdr_len, len+hdr_len, &s, pres, NULL);
     }
 
+    // report the dynamic table's live entry count as of this frame, so a
+    // caller which serves requests without forwarding them can tell whether
+    // it has diverged from what it last told user space
+    struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx.conn);
+    frame->dt_count = dt_info ? dt_info->count : 0;
+
     if (len > hdr_len + res) return -1;
 
     return res;
@@ -848,6 +847,28 @@ int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct pa
     int res = _parse_hdr_from(&ctx, hdr_len, len+hdr_len, &s, pres, null_prefix);
 
     return res;
+}
+
+// Reads the `idx`th entry of `conn`'s dynamic table into `out`, the same way
+// `extract_match` resolves an index a peer referenced (see `_get_table_entry`
+// for how `idx` is counted). Used by a target program that wants to replay
+// entries it has already seen onto another connection, e.g. beeline's example
+// fast path handing dynamic table changes off to user space.
+//
+// Returns 0 on success, -1 if `conn` has no dynamic table yet or `idx` names
+// no live entry.
+SEC("freplace")
+int get_dt_entry(const struct ip4_conn *conn __arg_nonnull, u32 idx, struct header_field *out __arg_nonnull) {
+    struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, conn);
+    if (dt_info == NULL) return -1;
+
+    struct header_field *hf = NULL;
+    _get_table_entry(conn, dt_info, idx, &hf);
+    if (hf == NULL) return -1;
+
+    __builtin_memcpy(out, hf, sizeof(*out));
+
+    return 0;
 }
 
 // Returns whether the parser captured a value for the match `idx`.

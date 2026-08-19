@@ -84,6 +84,27 @@ struct h2_frame {
     u32 sid;
     u8 type;
     u8 flags;
+
+    // The number of entries in the dynamic table of the connection this frame
+    // belongs to, as of the end of parsing it. A target program that serves
+    // requests without forwarding them to user space (e.g. beeline's example
+    // fast path) can compare this against what it last told user space to
+    // notice the two dynamic tables have diverged.
+    u32 dt_count;
+};
+
+// The number of bytes of a name or a value that are kept in a dynamic table
+// entry. Longer fields are truncated, which bounds the copies for the
+// verifier. Must stay in sync with `HEADER_FIELD_MAXLEN` of h2/parser.bpf.c.
+#define BEELINE_H2_FIELD_MAXLEN 128
+
+// A single field of the HPACK static or dynamic table, stored Huffman encoded,
+// i.e. the way it appears on the wire.
+struct header_field {
+    u8 key[BEELINE_H2_FIELD_MAXLEN];
+    u8 key_len;
+    u8 val[BEELINE_H2_FIELD_MAXLEN];
+    u8 val_len;
 };
 
 // A single transition of the DFA a parser walks: the state it leads to, and the
@@ -240,7 +261,24 @@ struct trans {
         __sink(pres);                                                                              \
         __sink(idx);                                                                               \
         __sink(str);                                                                               \
-        __sink(ret);                                                                               \
+                                                                                                   \
+        return ret;                                                                                \
+    }
+
+// Creates `name`, a stub reading the `idx`th entry of the dynamic table of the
+// connection a message parsed with an HTTP/2 parser belongs to
+// (`h2::Parser::replace_get_dt_entry`). `idx` is counted the HPACK way, i.e. 1
+// is the most recently added entry and `dt_count` (see `h2_frame`) the oldest
+// still live one. Returns 0 on success, -1 if there is no such entry.
+#define BEELINE_H2_GET_DT_ENTRY(name)                                                              \
+    __noinline int name(const struct ip4_conn *conn __arg_nonnull, u32 idx,                        \
+                        struct header_field *out __arg_nonnull) {                                   \
+        int ret = -1;                                                                               \
+                                                                                                   \
+        __sink(conn);                                                                               \
+        __sink(idx);                                                                                \
+        __sink(out);                                                                                \
+        __sink(ret);                                                                                \
                                                                                                    \
         return ret;                                                                                \
     }
