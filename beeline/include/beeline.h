@@ -261,6 +261,7 @@ struct trans {
         __sink(pres);                                                                              \
         __sink(idx);                                                                               \
         __sink(str);                                                                               \
+        __sink(ret);                                                                               \
                                                                                                    \
         return ret;                                                                                \
     }
@@ -272,13 +273,13 @@ struct trans {
 // still live one. Returns 0 on success, -1 if there is no such entry.
 #define BEELINE_H2_GET_DT_ENTRY(name)                                                              \
     __noinline int name(const struct ip4_conn *conn __arg_nonnull, u32 idx,                        \
-                        struct header_field *out __arg_nonnull) {                                   \
-        int ret = -1;                                                                               \
+                        struct header_field *out __arg_nonnull) {                                  \
+        int ret = -1;                                                                              \
                                                                                                    \
-        __sink(conn);                                                                               \
-        __sink(idx);                                                                                \
-        __sink(out);                                                                                \
-        __sink(ret);                                                                                \
+        __sink(conn);                                                                              \
+        __sink(idx);                                                                               \
+        __sink(out);                                                                               \
+        __sink(ret);                                                                               \
                                                                                                    \
         return ret;                                                                                \
     }
