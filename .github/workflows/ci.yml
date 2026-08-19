@@ -60,10 +60,6 @@ jobs:
                   arch=$([ "${{ runner.arch }}" = "ARM64" ] && echo arm64 || echo amd64)
                   curl -sSL "https://github.com/libbpf/bpftool/releases/download/${BPFTOOL_VERSION}/bpftool-${BPFTOOL_VERSION}-${arch}.tar.gz" | sudo tar -xz -C /usr/local/sbin bpftool
                   sudo chmod +x /usr/local/sbin/bpftool
-            - name: Dump BTF
-              run: |
-                  mkdir -p include
-                  /usr/local/sbin/bpftool btf dump file /sys/kernel/btf/vmlinux format c > include/vmlinux.h
             - uses: Swatinem/rust-cache@v2
             - name: Build
               run: cargo build --profile=${{ matrix.profile }} --locked --verbose --workspace

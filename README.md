@@ -27,7 +27,7 @@ gRPC          | WIP     |
 To build and test Beeline, you need to install the following packages:
 
 ```bash
-sudo apt install clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-`uname -r` linux-tools-`uname -r` libbpf-dev
+sudo apt install clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-`uname -r` linux-tools-`uname -r` 
 ```
 
 You should now be able to compile and test Beeline as follows:
