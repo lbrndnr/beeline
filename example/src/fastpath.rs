@@ -239,6 +239,7 @@ impl<'obj> Server<'obj> {
             .capture_hdr(&http::header::CONTENT_LENGTH)?
             .replace_parse_msg("parse_h2")
             .replace_extract("extract_h2_match")
+            .replace_get_dt_entry("get_dt_entry")
             .attach(prog_fd)?;
 
         let cgroup_fd = std::fs::OpenOptions::new()

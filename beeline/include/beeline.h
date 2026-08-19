@@ -86,10 +86,13 @@ struct h2_frame {
     u8 flags;
 
     // The number of entries in the dynamic table of the connection this frame
-    // belongs to, as of the end of parsing it. A target program that serves
-    // requests without forwarding them to user space (e.g. beeline's example
-    // fast path) can compare this against what it last told user space to
-    // notice the two dynamic tables have diverged.
+    // belongs to, before and after decoding it. A target program that answers
+    // some requests without forwarding them to user space (e.g. beeline's
+    // example fast path) can compare `dt_count_before` against what it last
+    // handed to user space to see how far the two tables have drifted apart,
+    // and take `dt_count` as the state user space reaches once it has decoded
+    // this frame itself.
+    u32 dt_count_before;
     u32 dt_count;
 };
 

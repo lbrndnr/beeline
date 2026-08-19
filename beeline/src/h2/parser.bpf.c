@@ -756,6 +756,14 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struc
     u16 s = s_any;
     struct msg_ctx ctx = _new_msg_ctx(msg);
 
+    // the entry count is reported on either side of the decode, so that a
+    // caller which answers requests itself can tell both how far user space
+    // already lags behind and where it ends up once it decodes this frame.
+    // `_parse_*_from` only ever updates this entry, never deletes it, so the
+    // pointer stays good across the call.
+    struct dynamic_table_info *dt_info = _get_dynamic_table(&ctx.conn);
+    frame->dt_count_before = dt_info ? dt_info->count : 0;
+
     int res;
     if (is_hdr) {
         res = _parse_hdr_from(&ctx, hdr_len, len+hdr_len, &s, pres, NULL);
@@ -763,10 +771,6 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struc
         res = _parse_stg_from(&ctx, hdr_len, len+hdr_len, &s, pres, NULL);
     }
 
-    // report the dynamic table's live entry count as of this frame, so a
-    // caller which serves requests without forwarding them can tell whether
-    // it has diverged from what it last told user space
-    struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, &ctx.conn);
     frame->dt_count = dt_info ? dt_info->count : 0;
 
     if (len > hdr_len + res) return -1;
