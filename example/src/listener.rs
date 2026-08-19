@@ -67,15 +67,32 @@ impl SyncHandle {
     /// Each one is a raw HPACK block of literal header fields with incremental
     /// indexing, i.e. exactly the representation that makes a decoder add them
     /// to its dynamic table.
+    ///
+    /// The stream stops handing out bytes once it has read an update and only
+    /// resumes when it has been taken, so a reader that does not drain this
+    /// makes no further progress. That is what keeps the codec from decoding
+    /// the very request the update belongs to before the update is applied.
     pub fn take(&self) -> Vec<Vec<u8>> {
         let mut blocks = self.blocks.lock().expect("sync handle poisoned");
         blocks.drain(..).collect()
+    }
+
+    /// Returns whether any update is waiting to be applied.
+    fn is_pending(&self) -> bool {
+        !self.blocks.lock().expect("sync handle poisoned").is_empty()
     }
 
     fn push(&self, block: Vec<u8>) {
         let mut blocks = self.blocks.lock().expect("sync handle poisoned");
         blocks.push_back(block);
     }
+}
+
+/// The protocol a connection turned out to speak.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Protocol {
+    Http1,
+    Http2,
 }
 
 /// Where the scanner is in the stream it is walking.
@@ -110,6 +127,10 @@ struct Scanner {
     /// Bytes that have been scanned and are waiting to be handed to the reader.
     out: VecDeque<u8>,
 
+    /// Bytes that have arrived but must not be scanned yet, because an update
+    /// ahead of them has not been applied. See [`Scanner::scan`].
+    hold: VecDeque<u8>,
+
     sync: SyncHandle,
 }
 
@@ -118,13 +139,24 @@ impl Scanner {
         Self {
             state: State::Preface { matched: 0 },
             out: VecDeque::new(),
+            hold: VecDeque::new(),
             sync,
         }
     }
 
     /// Walks `input`, appending everything that is not a sync frame to `out`
     /// and handing the sync frames it finds to the [`SyncHandle`].
+    ///
+    /// Scanning stops at an update and the rest of `input` is held back, so
+    /// that the request the update belongs to cannot reach the codec before
+    /// the update has been applied to its dynamic table. It resumes once the
+    /// update has been taken off the handle.
     fn scan(&mut self, input: &[u8]) {
+        if self.sync.is_pending() {
+            self.hold.extend(input.iter().copied());
+            return;
+        }
+
         let mut rest = input;
 
         while !rest.is_empty() {
@@ -212,6 +244,11 @@ impl Scanner {
 
                         self.sync.push(block);
                         self.state = State::header();
+
+                        // everything behind the update has to wait for it to
+                        // be applied
+                        self.hold.extend(rest.iter().copied());
+                        return;
                     }
                 }
             }
@@ -242,6 +279,35 @@ impl BeelineStream {
         self.scanner.sync.clone()
     }
 
+    /// Reads until the protocol the client speaks is known.
+    ///
+    /// The bytes this consumes are the ones the scanner needs to recognise the
+    /// preface; they are kept and handed to the codec afterwards, so this can
+    /// be called before serving the connection without losing anything.
+    pub async fn protocol(&mut self) -> io::Result<Protocol> {
+        loop {
+            match self.scanner.state {
+                State::Preface { .. } => {}
+                State::Blind => return Ok(Protocol::Http1),
+                _ => return Ok(Protocol::Http2),
+            }
+
+            let mut chunk = [0; READ_CHUNK];
+            let n = {
+                use tokio::io::AsyncReadExt;
+                self.inner.read(&mut chunk).await?
+            };
+
+            if n == 0 {
+                // the connection ended before it said anything, so it does not
+                // matter which of the two it would have been
+                return Ok(Protocol::Http1);
+            }
+
+            self.scanner.scan(&chunk[..n]);
+        }
+    }
+
     /// Moves as much of the scanned output as fits into `buf`.
     fn drain_into(&mut self, buf: &mut ReadBuf<'_>) {
         let out = &mut self.scanner.out;
@@ -268,6 +334,22 @@ impl AsyncRead for BeelineStream {
             if !me.scanner.out.is_empty() {
                 me.drain_into(buf);
                 return Poll::Ready(Ok(()));
+            }
+
+            if me.scanner.sync.is_pending() {
+                // an update is waiting to be applied, and nothing behind it may
+                // be handed out until it has been. the reader of this stream is
+                // the one that applies it (see `serve` in `h2serve.rs`), and it
+                // drains the handle before every poll, so waking the task right
+                // back up is what lets it get there.
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+
+            if !me.scanner.hold.is_empty() {
+                let held: Vec<u8> = me.scanner.hold.drain(..).collect();
+                me.scanner.scan(&held);
+                continue;
             }
 
             let mut chunk = [0; READ_CHUNK];
@@ -355,15 +437,27 @@ mod tests {
 
     /// Feeds `chunks` through a scanner and returns what it passed on and what
     /// it took out.
+    ///
+    /// Updates are taken off the handle as they appear, which is what the
+    /// connection loop does after applying them and what lets the scanner carry
+    /// on past the barrier.
     fn scan(chunks: &[&[u8]]) -> (Vec<u8>, Vec<Vec<u8>>) {
         let sync = SyncHandle::default();
         let mut scanner = Scanner::new(sync.clone());
+        let mut blocks = Vec::new();
 
         for chunk in chunks {
             scanner.scan(chunk);
+
+            while sync.is_pending() {
+                blocks.extend(sync.take());
+
+                let held: Vec<u8> = scanner.hold.drain(..).collect();
+                scanner.scan(&held);
+            }
         }
 
-        (scanner.out.into_iter().collect(), sync.take())
+        (scanner.out.into_iter().collect(), blocks)
     }
 
     #[test]
@@ -470,10 +564,28 @@ mod tests {
         let (mut stream, _) = listener.accept().await.expect("accept");
         let sync = stream.sync_handle();
 
+        // the stream stops handing out bytes at an update until it has been
+        // taken, so a reader that never drains would stall here; this stands in
+        // for the connection loop doing it between requests
+        let taken = Arc::new(Mutex::new(Vec::new()));
+        let drain = {
+            let sync = sync.clone();
+            let taken = taken.clone();
+            tokio::spawn(async move {
+                loop {
+                    taken.lock().unwrap().extend(sync.take());
+                    tokio::task::yield_now().await;
+                }
+            })
+        };
+
         let mut got = Vec::new();
         stream.read_to_end(&mut got).await.expect("read");
 
+        drain.abort();
+        taken.lock().unwrap().extend(sync.take());
+
         assert_eq!(got, expected);
-        assert_eq!(sync.take(), vec![b"the-update".to_vec()]);
+        assert_eq!(*taken.lock().unwrap(), vec![b"the-update".to_vec()]);
     }
 }

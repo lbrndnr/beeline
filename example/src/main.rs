@@ -6,6 +6,7 @@
 
 use axum::http::StatusCode;
 use fastpath::{OpenObject, Server};
+use example::{h2serve, listener::BeelineListener};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tower_http::{
@@ -16,7 +17,6 @@ use tower_http::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod fastpath;
-mod listener;
 
 #[tokio::main]
 async fn main() {
@@ -61,8 +61,9 @@ async fn main() {
     let fastpath = Server::attach(addr, &mut open_obj, routes).expect("attach");
 
     let listener = TcpListener::bind(addr).await.unwrap();
+    let listener = BeelineListener::new(listener);
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await.unwrap();
+    h2serve::serve(listener, app).await;
 
     drop(fastpath);
 }

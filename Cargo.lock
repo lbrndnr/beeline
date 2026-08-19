@@ -460,7 +460,13 @@ dependencies = [
  "as-bytes",
  "axum",
  "beeline",
+ "bytes",
+ "h2",
  "httlib-huffman",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "libc",
  "tokio",
  "tower",
@@ -578,8 +584,6 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 [[package]]
 name = "h2"
 version = "0.4.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
 dependencies = [
  "atomic-waker",
  "bytes",

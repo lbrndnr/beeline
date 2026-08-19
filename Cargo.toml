@@ -2,6 +2,13 @@
 resolver = "2"
 members = ["beeline", "example", "utils"]
 
+# The example server needs to reach into the HPACK dynamic table of a
+# connection to replay the header blocks the fast path answered without it, and
+# h2 does not expose that. `vendor/h2` is h2 0.4.16 with the accessors for it
+# bolted on, see the BEELINE PATCH comments in there.
+[patch.crates-io]
+h2 = { path = "vendor/h2" }
+
 [workspace.package]
 license = "GPL-3.0"
 authors = [
