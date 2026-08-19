@@ -13,16 +13,15 @@ axum = { version = "0.8.9", features = ["http2"] }
 beeline = { path = "../beeline", features = ["h1", "h2"] }
 tokio = { version = "1.52", features = ["full"] }
 httlib-huffman = "0.3.4"
-bpf-tracing = "0.0.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["fs", "trace", "set-status"] }
-libbpf-rs = "0.26.2"
 libc = "0.2.189"
 anyhow = "1.0.104"
 as-bytes = "0.2.0"
+xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
 
 [build-dependencies]
-libbpf-cargo = "0.26.2"
+xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
 beeline-include = { path = "../beeline-include" }

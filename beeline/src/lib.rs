@@ -1,8 +1,7 @@
 use anyhow::Result;
-use libbpf_rs::{Mut, OpenProgramImpl, PrintLevel};
 #[cfg(feature = "h2")]
 use std::net::SocketAddr;
-use tracing::{debug, info, warn};
+use xbpf::libbpf::{Mut, OpenProgramImpl};
 
 #[cfg(feature = "h1")]
 pub mod h1;
@@ -25,16 +24,6 @@ impl From<SocketAddr> for h2::ip4_addr {
             },
             SocketAddr::V6(_) => panic!("ip4_addr does not support IPv6 addresses"),
         }
-    }
-}
-
-fn print(level: PrintLevel, msg: String) {
-    let msg = msg.trim_start_matches("libbpf:").trim();
-
-    match level {
-        PrintLevel::Debug => debug!(target: "libbpf", "{}", msg),
-        PrintLevel::Info => info!(target: "libbpf", "{}", msg),
-        PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
     }
 }
 

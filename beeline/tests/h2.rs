@@ -8,8 +8,9 @@ use http::{HeaderName, HeaderValue, Request, Response, header};
 use tokio::net::TcpStream;
 use utils::{
     server,
-    test::{Direction, OpenObject, TestProgram},
+    test::{Direction, TestProgram},
 };
+use xbpf::OpenObject;
 
 const TEST_HEADER: HeaderName = HeaderName::from_static("testheader");
 const METHOD_HEADER: HeaderName = HeaderName::from_static("method");

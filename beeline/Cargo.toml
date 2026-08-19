@@ -11,17 +11,16 @@ h2 = []
 [dependencies]
 anyhow = "1.0.102"
 as-bytes = "0.2.0"
-bpf-tracing = "0.0.5"
 bytes = "1.11.1"
 http = "1.4.2"
 httlib-huffman = "0.3.4"
-libbpf-rs = "0.26.2"
 libc = "0.2.186"
 plain = "0.2.3"
 tracing = "0.1.44"
+xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
 
 [build-dependencies]
-libbpf-cargo = "0.26.2"
+xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
 beeline-include = { path = "../beeline-include" }
 
 [dev-dependencies]

@@ -181,19 +181,17 @@ dependencies = [
  "anyhow",
  "as-bytes",
  "beeline-include",
- "bpf-tracing",
  "bytes",
  "h2",
  "httlib-huffman",
  "http",
- "libbpf-cargo",
- "libbpf-rs",
  "libc",
  "plain",
  "reqwest",
  "tokio",
  "tracing",
  "utils",
+ "xbpf",
 ]
 
 [[package]]
@@ -217,7 +215,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03afc6160907ec9ab6c9b81d830c65351789472986f17d8c9279fca8929c851d"
 dependencies = [
  "bpf-tracing-include 0.0.5",
- "libbpf-rs",
+ "libbpf-rs 0.26.2",
  "tracing",
 ]
 
@@ -467,16 +465,14 @@ dependencies = [
  "axum",
  "beeline",
  "beeline-include",
- "bpf-tracing",
  "httlib-huffman",
- "libbpf-cargo",
- "libbpf-rs",
  "libc",
  "tokio",
  "tower",
  "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",
+ "xbpf",
 ]
 
 [[package]]
@@ -596,6 +592,12 @@ dependencies = [
  "wasip2",
  "wasip3",
 ]
+
+[[package]]
+name = "glob"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "h2"
@@ -975,14 +977,14 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libbpf-cargo"
-version = "0.26.2"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67e63283df9689af55b85f91e99dc8b213ae89fc3e1d9bb29ab7f75eb8a8a783"
+checksum = "b60690d8d106293050fe02e0f6d090556b3ca2a2ec9c73271eb47efd69376b12"
 dependencies = [
  "anyhow",
  "cargo_metadata",
  "clap",
- "libbpf-rs",
+ "libbpf-rs 0.27.0",
  "memmap2",
  "serde",
  "serde_json",
@@ -996,6 +998,18 @@ name = "libbpf-rs"
 version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd8e8db46a2d5967b5b3dba7aba32a875dc38f222395040607045635ec1f9b63"
+dependencies = [
+ "bitflags",
+ "libbpf-sys",
+ "libc",
+ "vsprintf",
+]
+
+[[package]]
+name = "libbpf-rs"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e69ad90c37d14f657291712f297a1460a1d1b647da45e0e372996b807c38f02"
 dependencies = [
  "bitflags",
  "libbpf-sys",
@@ -2110,12 +2124,11 @@ dependencies = [
  "beeline-include",
  "bpf-tracing",
  "bytes",
- "libbpf-cargo",
- "libbpf-rs",
  "libc",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "xbpf",
 ]
 
 [[package]]
@@ -2693,6 +2706,19 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "xbpf"
+version = "0.0.1"
+source = "git+https://github.com/lbrndnr/ebpf.git?branch=map#80058de9af9795051323f7d48d9e9dd0394b2979"
+dependencies = [
+ "glob",
+ "libbpf-cargo",
+ "libbpf-rs 0.27.0",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "yoke"

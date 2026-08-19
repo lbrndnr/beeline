@@ -5,10 +5,6 @@ use as_bytes::AsBytes;
 use axum::http;
 use beeline::{h1, h2};
 use httlib_huffman as huffman;
-use libbpf_rs::{
-    Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
-    skel::{OpenSkel, Skel, SkelBuilder},
-};
 use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
@@ -23,18 +19,12 @@ use std::{
 };
 use tracing::{Level, debug, info, warn};
 use types::*;
+use xbpf::libbpf::{
+    self as libbpf_rs, Link, MapCore, MapFlags, MapHandle, MapType,
+    skel::{OpenSkel, Skel, SkelBuilder},
+};
 
-include!(concat!(env!("OUT_DIR"), "/server.skel.rs"));
-
-fn print(level: PrintLevel, msg: String) {
-    let msg = msg.trim_start_matches("libbpf:").trim();
-
-    match level {
-        PrintLevel::Debug => debug!(target: "libbpf", "{}", msg),
-        PrintLevel::Info => info!(target: "libbpf", "{}", msg),
-        PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
-    }
-}
+xbpf::include_bpf!("server");
 
 fn huffman_encode(val: &str) -> Vec<u8> {
     let mut res = Vec::new();
@@ -146,8 +136,6 @@ impl<'obj> Server<'obj> {
         open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
         routes: HashMap<String, std::path::PathBuf>,
     ) -> Result<Self> {
-        set_print(Some((PrintLevel::Debug, print)));
-
         if routes.len() > MAX_ROUTES {
             bail!(
                 "too many fastpath routes: {} configured, at most {MAX_ROUTES} supported",
@@ -208,6 +196,10 @@ impl<'obj> Server<'obj> {
         }
 
         let skel = open_skel.load()?;
+        _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+        xbpf::tracing::try_init(skel.object())?;
 
         // the route index is a hash map, so it can only be populated once the
         // program is loaded and the map created
@@ -240,11 +232,6 @@ impl<'obj> Server<'obj> {
             .replace_parse_msg("parse_h2")
             .replace_extract("extract_h2_match")
             .attach(prog_fd)?;
-
-        _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
-        bpf_tracing::try_init(skel.object())?;
 
         let cgroup_fd = std::fs::OpenOptions::new()
             .read(true)

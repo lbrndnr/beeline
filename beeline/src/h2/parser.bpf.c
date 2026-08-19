@@ -1,6 +1,6 @@
 #include "vmlinux.h"
 #include "beeline.h"
-#include "bpf_tracing.h"
+#include "xbpf.h"
 #include <bpf/bpf_helpers.h>
 
 enum h2_parse_state {

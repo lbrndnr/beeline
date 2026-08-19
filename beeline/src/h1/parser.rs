@@ -6,13 +6,13 @@ use crate::{
 };
 use anyhow::Result;
 use http::HeaderName;
-use libbpf_rs::{
-    Link, MapCore, OpenObject, PrintLevel, set_print,
-    skel::{OpenSkel, Skel, SkelBuilder},
-};
 use std::{collections::HashMap, mem::MaybeUninit};
 use tracing::{Level, debug, trace, warn};
 use types::*;
+use xbpf::libbpf::{
+    self as libbpf_rs, Link, MapCore, OpenObject,
+    skel::{OpenSkel, Skel, SkelBuilder},
+};
 
 const CRLF: &str = "\r\n";
 
@@ -26,7 +26,7 @@ pub struct Parser {
     matched_fn: Option<String>,
 }
 
-include!(concat!(env!("OUT_DIR"), "/h1/parser.skel.rs"));
+xbpf::include_bpf!("h1/parser");
 
 fn new_transition(state: StateId, action: Option<Action>, rodata: &rodata) -> trans {
     fn start(cid: CaptureId, rodata: &rodata) -> u16 {
@@ -236,8 +236,6 @@ impl Parser {
     ///
     /// Returns an error if attachment to the target program fails.
     pub fn attach<'obj>(self, target: i32) -> Result<AttachedParser> {
-        set_print(Some((PrintLevel::Debug, crate::print)));
-
         let parser = self.done_on_hdr_end();
 
         let skel_builder = ParserSkelBuilder::default();
@@ -267,7 +265,7 @@ impl Parser {
         parser.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        bpf_tracing::try_init(skel.object())?;
+        xbpf::tracing::try_init(skel.object())?;
 
         let mut links = Vec::new();
         if parser.parse_msg_fn.is_some() {

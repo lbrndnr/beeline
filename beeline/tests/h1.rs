@@ -8,8 +8,9 @@ use tokio::{
 };
 use utils::{
     server,
-    test::{Direction, OpenObject, TestProgram},
+    test::{Direction, TestProgram},
 };
+use xbpf::OpenObject;
 
 fn assert_match_eq(prog: &TestProgram, idx: usize, expected: Option<&HeaderValue>) {
     let actual = prog.get_match(idx).expect("get_match");

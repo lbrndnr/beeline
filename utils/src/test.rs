@@ -3,10 +3,6 @@
 use anyhow::Result;
 use as_bytes::AsBytes;
 use beeline::h2::{Action, Parser};
-use libbpf_rs::{
-    Link, MapCore, MapFlags, MapHandle, MapType, PrintLevel, set_print,
-    skel::{OpenSkel, Skel, SkelBuilder},
-};
 use std::{
     io::{Error, ErrorKind},
     mem::MaybeUninit,
@@ -19,18 +15,12 @@ use std::{
 };
 use tracing::{Level, debug, info, warn};
 use types::*;
+use xbpf::libbpf::{
+    self as libbpf_rs, Link, MapCore, MapFlags, MapHandle, MapType, ProgramInput,
+    skel::{OpenSkel, Skel, SkelBuilder},
+};
 
-include!(concat!(env!("OUT_DIR"), "/prog.skel.rs"));
-
-fn print(level: PrintLevel, msg: String) {
-    let msg = msg.trim_start_matches("libbpf:").trim();
-
-    match level {
-        PrintLevel::Debug => debug!(target: "libbpf", "{}", msg),
-        PrintLevel::Info => info!(target: "libbpf", "{}", msg),
-        PrintLevel::Warn => warn!(target: "libbpf", "{}", msg),
-    }
-}
+xbpf::include_bpf!("prog");
 
 /// The direction of the messages to parse. Requests travel downstream to the
 /// server, responses upstream to the client.
@@ -56,8 +46,6 @@ impl<'obj> TestProgram<'obj> {
         open_obj: &'obj mut MaybeUninit<libbpf_rs::OpenObject>,
         direction: Direction,
     ) -> Result<Self> {
-        set_print(Some((PrintLevel::Debug, print)));
-
         let address = address
             .to_socket_addrs()?
             .next()
@@ -87,7 +75,7 @@ impl<'obj> TestProgram<'obj> {
         _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
-        bpf_tracing::try_init(skel.object())?;
+        xbpf::tracing::try_init(skel.object())?;
 
         let cgroup_fd = std::fs::OpenOptions::new()
             .read(true)
@@ -105,7 +93,7 @@ impl<'obj> TestProgram<'obj> {
 
     pub fn num_upgraded_conns(&self) -> Result<u32> {
         let func = &self.skel.progs.get_num_upgraded_conns;
-        let input = libbpf_rs::ProgramInput::default();
+        let input = ProgramInput::default();
 
         Ok(func.test_run(input)?.return_value)
     }
@@ -130,31 +118,3 @@ impl<'obj> TestProgram<'obj> {
         self.skel.progs.msg_verdict.as_fd().as_raw_fd()
     }
 }
-
-pub struct OpenObject {
-    inner: MaybeUninit<libbpf_rs::OpenObject>,
-}
-
-impl OpenObject {
-    pub fn new() -> Self {
-        Self {
-            inner: MaybeUninit::uninit(),
-        }
-    }
-}
-
-impl Deref for OpenObject {
-    type Target = MaybeUninit<libbpf_rs::OpenObject>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl DerefMut for OpenObject {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
-
-unsafe impl Send for OpenObject {}

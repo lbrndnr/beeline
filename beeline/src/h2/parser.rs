@@ -7,16 +7,16 @@ use anyhow::{Result, bail};
 use as_bytes::AsBytes;
 use httlib_huffman as huffman;
 use http::HeaderName;
-use libbpf_rs::{
-    Link, MapCore, MapFlags, MapHandle, OpenObject, PrintLevel, set_print,
-    skel::{OpenSkel, Skel, SkelBuilder},
-};
 use plain::Plain;
 use std::mem::MaybeUninit;
 use std::net::SocketAddr;
 use tracing::{Level, debug, warn};
 use types::*;
 pub use types::{ip4_addr, ip4_conn};
+use xbpf::libbpf::{
+    self as libbpf_rs, Link, MapCore, MapFlags, MapHandle, OpenObject,
+    skel::{OpenSkel, Skel, SkelBuilder},
+};
 
 extern crate plain;
 
@@ -32,7 +32,7 @@ pub struct Parser {
     matched_fn: Option<String>,
 }
 
-include!(concat!(env!("OUT_DIR"), "/h2/parser.skel.rs"));
+xbpf::include_bpf!("h2/parser");
 
 fn new_transition(state: u16, action: Action, rodata: &rodata) -> trans {
     let action = match action {
@@ -190,8 +190,6 @@ impl Parser {
     ///
     /// Returns an error if attachment to the target program fails.
     pub fn attach<'obj>(self, target: i32) -> Result<AttachedParser> {
-        set_print(Some((PrintLevel::Debug, crate::print)));
-
         let skel_builder = ParserSkelBuilder::default();
         let mut open_obj: MaybeUninit<OpenObject> = MaybeUninit::uninit();
         let mut open_skel = skel_builder.open(&mut open_obj)?;
@@ -216,7 +214,7 @@ impl Parser {
         self.inject(&mut open_skel)?;
 
         let skel = open_skel.load()?;
-        bpf_tracing::try_init(skel.object())?;
+        xbpf::tracing::try_init(skel.object())?;
 
         let mut links = Vec::new();
         if self.parse_msg_fn.is_some() {
