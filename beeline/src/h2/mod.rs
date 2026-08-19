@@ -1,8 +1,21 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 mod dfa;
 mod parser;
 pub use parser::{AttachedParser, Parser, ip4_addr, ip4_conn};
+
+impl From<SocketAddr> for ip4_addr {
+    fn from(addr: SocketAddr) -> Self {
+        match addr {
+            SocketAddr::V4(addr) => ip4_addr {
+                ip4: u32::from_ne_bytes(addr.ip().octets()),
+                port: addr.port() as u32,
+            },
+            SocketAddr::V6(_) => panic!("ip4_addr does not support IPv6 addresses"),
+        }
+    }
+}
 
 fn create_header_maps() -> (
     HashMap<String, usize>,
