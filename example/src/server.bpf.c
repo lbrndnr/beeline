@@ -67,9 +67,9 @@ volatile const u32 port;
 // server's own codec ever sees it.
 #define DT_SYNC_FRAME_TYPE 0xFB
 
-// The most entries a single sync frame carries. A client that ran further
-// ahead than this cannot be caught up, so the fast path stops answering on
-// that connection instead of letting the two tables drift apart silently.
+// The most entries a single sync frame carries. A table larger than this
+// cannot be replayed, so the fast path stops answering on that connection
+// instead of letting the two tables drift apart silently.
 #define MAX_SYNC_ENTRIES 8
 
 // The most bytes a sync frame's body can take up. An entry needs at most two
@@ -86,17 +86,22 @@ volatile const u32 port;
 // bother to emit.
 #define MAX_SYNC_FIELD 126
 
-// How much of a connection's dynamic table user space has been told about,
-// i.e. the entry count it reaches once it has decoded everything the fast path
-// let through to it. The fast path answering a request itself is invisible to
-// user space, so this stops advancing while the mirrored table keeps growing;
-// the difference is what the next sync frame has to replay.
+// Whether the fast path has answered a request on a connection since user
+// space last saw one, i.e. whether the two dynamic tables may have drifted
+// apart. Set when a request is served, cleared once the difference has been
+// handed over.
+//
+// Only a flag is kept, not a count of what changed: a request the fast path
+// answers can evict entries as well as add them, and once user space is
+// holding entries the client has already dropped there is no set of additions
+// that puts the two back in step. The sync frame therefore replays the whole
+// table rather than a delta.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
     __type(key, struct ip4_conn);
-    __type(value, u32);
-} dt_synced SEC(".maps");
+    __type(value, u8);
+} dt_dirty SEC(".maps");
 
 // Scratch space for the sync frame that is being built, along with the entry
 // that is being read out of the dynamic table into it. Both are far too large
@@ -191,9 +196,37 @@ static __always_inline int sync_put_byte(struct dt_sync_buf *buf, u8 c) {
     return 0;
 }
 
-// Renders the `n` most recently added entries of `conn`'s dynamic table into
-// `buf` as an HPACK block, oldest first, so that a decoder replaying the block
-// inserts them in the order the fast path saw them.
+// Writes an HPACK dynamic table size update of `size` (RFC 7541 section 6.3),
+// a five bit prefixed integer under the pattern `001`.
+static __always_inline int sync_put_size_update(struct dt_sync_buf *buf, u32 size) {
+    if (size < 31) return sync_put_byte(buf, 0x20 | size);
+
+    if (sync_put_byte(buf, 0x3F) < 0) return -1;
+
+    // the remainder goes out seven bits at a time, every byte but the last
+    // carrying a continuation bit. a u32 needs at most five of them.
+    u32 rest = size - 31;
+    u32 i;
+    bpf_for(i, 0, 5) {
+        if (rest < 128) return sync_put_byte(buf, rest);
+
+        if (sync_put_byte(buf, (rest & 0x7F) | 0x80) < 0) return -1;
+        rest >>= 7;
+    }
+
+    return -1;
+}
+
+// Renders the whole of `conn`'s dynamic table into `buf` as an HPACK block,
+// `n` entries, oldest first, so that a decoder replaying the block ends up
+// holding exactly what the fast path last saw the client holding.
+//
+// The block opens by resizing the table to nothing and back to `max_size`,
+// which empties the decoder's table before the entries are replayed into it.
+// That is what makes this a resync rather than a delta: a request the fast path
+// answered may have evicted entries as well as added them, and only starting
+// from empty puts a decoder that still holds the evicted ones right again. A
+// size update is only legal at the start of a block, which is where these are.
 //
 // Every entry is written as a literal header field with incremental indexing
 // and a new name (RFC 7541 section 6.2.1), which is the representation that
@@ -201,9 +234,12 @@ static __always_inline int sync_put_byte(struct dt_sync_buf *buf, u8 c) {
 // straight out of the mirrored table, where they are already stored Huffman
 // encoded, so both length prefixes carry the H bit.
 //
-// Returns 0 if all `n` entries were written, -1 if one could not be read or
+// Returns 0 if the whole table was written, -1 if an entry could not be read or
 // does not fit, in which case `buf` is left incomplete and must be discarded.
-static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct ip4_conn *conn, u32 n) {
+static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct ip4_conn *conn, u32 n, u32 max_size) {
+    if (sync_put_size_update(buf, 0) < 0) return -1;
+    if (sync_put_size_update(buf, max_size) < 0) return -1;
+
     u32 i;
     bpf_for(i, 0, n) {
         // the entries to replay are the `n` most recent ones, i.e. HPACK
@@ -231,8 +267,9 @@ static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct 
     return 0;
 }
 
-// Prepends the `n` dynamic table entries `msg`'s connection added behind user
-// space's back to `msg`, as a frame of type `DT_SYNC_FRAME_TYPE`.
+// Prepends the dynamic table of `msg`'s connection to `msg`, as a frame of
+// type `DT_SYNC_FRAME_TYPE`, so that user space can bring its own table back in
+// line with it.
 //
 // The frame goes in front of the message rather than replacing it: the message
 // still has to reach the server, it just has to be preceded by the table
@@ -240,7 +277,7 @@ static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct 
 //
 // Returns the number of bytes prepended, or -1 if the frame could not be
 // built, in which case `msg` is left untouched.
-static __always_inline int prepend_dt_sync(struct sk_msg_md *msg, const struct ip4_conn *conn, u32 n) {
+static __always_inline int prepend_dt_sync(struct sk_msg_md *msg, const struct ip4_conn *conn, u32 n, u32 max_size) {
     u32 zero = 0;
     struct dt_sync_buf *buf = bpf_map_lookup_elem(&dt_sync_scratch, &zero);
     if (!buf) return -1;
@@ -248,10 +285,11 @@ static __always_inline int prepend_dt_sync(struct sk_msg_md *msg, const struct i
     // the frame header is written once the body's length is known, so the body
     // is built up behind it
     buf->len = 0;
-    if (render_dt_sync(buf, conn, n) < 0) return -1;
+    if (render_dt_sync(buf, conn, n, max_size) < 0) return -1;
 
     u32 body_len = buf->len;
     if (body_len == 0 || body_len > MAX_SYNC_BODY) return -1;
+    bpf_clamp_uminmax(body_len, 1, MAX_SYNC_BODY);
 
     u32 frame_len = 9 + body_len;
     u32 orig_size = msg->size;
@@ -437,10 +475,11 @@ int msg_verdict(struct sk_msg_md *msg) {
     int path_res = -1;
     u32 sid = 0;
 
-    // how far user space's dynamic table lags behind the mirrored one, and
-    // where it ends up once it has decoded this message itself
-    u32 dt_lag = 0;
-    u32 dt_after = 0;
+    // whether the two dynamic tables may have drifted apart, and what it takes
+    // to replay the mirrored one if they have
+    bool dt_stale = false;
+    u32 dt_count = 0;
+    u32 dt_max_size = 0;
 
     if (is_h2) {
         struct h2_frame frame = { 0 };
@@ -448,11 +487,15 @@ int msg_verdict(struct sk_msg_md *msg) {
         if (msg_len >= 0) {
             sid = frame.sid;
 
-            u32 *synced = bpf_map_lookup_elem(&dt_synced, &ikey);
-            u32 dt_before = frame.dt_count_before;
-            u32 seen = synced ? *synced : 0;
-            dt_lag = (dt_before > seen) ? (dt_before - seen) : 0;
-            dt_after = frame.dt_count;
+            u8 *dirty = bpf_map_lookup_elem(&dt_dirty, &ikey);
+            dt_stale = (dirty != NULL && *dirty != 0);
+
+            // the table as it stands before this message, which is the state
+            // user space has to reach before decoding it. the entries this
+            // message itself adds are none of the sync frame's business, user
+            // space adds those when it decodes it.
+            dt_count = frame.dt_count_before;
+            dt_max_size = frame.dt_max_size;
 
             // a client only acks SETTINGS once it has received the server's, so
             // this is the point from which a response cannot preempt the
@@ -510,11 +553,11 @@ int msg_verdict(struct sk_msg_md *msg) {
         bpf_debug("Not serving request, HTTP/2 handshake is still in flight");
     }
 
-    // a lag that no longer fits into one sync frame cannot be handed over, so
-    // the request goes to user space and the fast path stays out of the way
-    // until it has caught up again
-    if (can_serve && dt_lag > MAX_SYNC_ENTRIES) {
-        bpf_warn("Not serving request, user space is %u dynamic table entries behind", dt_lag);
+    // a table too large to replay cannot be handed over, so answering here
+    // would strand user space for good. the request goes to it instead, which
+    // is always safe: decoding it is what keeps the two tables in step.
+    if (can_serve && dt_count > MAX_SYNC_ENTRIES) {
+        bpf_warn("Not serving request, the dynamic table holds %u entries", dt_count);
         can_serve = false;
     }
 
@@ -529,6 +572,14 @@ int msg_verdict(struct sk_msg_md *msg) {
             bpf_debug("Served request to %s", head);
             #endif
 
+            // user space knows nothing of this request, and the header block
+            // just decoded may well have changed the dynamic table, so the
+            // next message it does get has to carry the table with it
+            if (is_h2) {
+                u8 dirty = 1;
+                bpf_map_update_elem(&dt_dirty, &ikey, &dirty, BPF_ANY);
+            }
+
             return SK_PASS;
         }
         else {
@@ -536,26 +587,25 @@ int msg_verdict(struct sk_msg_md *msg) {
         }
     }
 
-    // the message is going to user space, so this is the moment to hand over
-    // whatever the fast path added to the dynamic table while answering on its
-    // own. once it is in front of the message, user space decodes both and
-    // ends up with the same table the fast path mirrors.
-    if (is_h2 && msg_len >= 0) {
-        if (dt_lag > 0) {
-            int synced = prepend_dt_sync(msg, &ikey, dt_lag);
-            if (synced < 0) {
-                bpf_error("Failed to sync dynamic table, dropping connection");
+    // the message is going to user space, so this is the moment to hand the
+    // dynamic table over. once it is in front of the message, user space
+    // rebuilds the table from it and then decodes the message against it,
+    // ending up exactly where the fast path's mirror is.
+    if (is_h2 && msg_len >= 0 && dt_stale) {
+        int synced = prepend_dt_sync(msg, &ikey, dt_count, dt_max_size);
+        if (synced < 0) {
+            bpf_error("Failed to sync dynamic table, dropping connection");
 
-                // letting the message through now would have user space decode
-                // it against a table that is missing entries, which desyncs
-                // HPACK for good. cutting the connection is the lesser evil.
-                return SK_DROP;
-            }
-
-            msg_len += synced;
+            // letting the message through now would have user space decode it
+            // against a table that no longer matches the client's, which
+            // desyncs HPACK for good. cutting the connection is the lesser evil.
+            return SK_DROP;
         }
 
-        bpf_map_update_elem(&dt_synced, &ikey, &dt_after, BPF_ANY);
+        msg_len += synced;
+
+        u8 dirty = 0;
+        bpf_map_update_elem(&dt_dirty, &ikey, &dirty, BPF_ANY);
     }
 
     bpf_msg_apply_bytes(msg, msg_len);

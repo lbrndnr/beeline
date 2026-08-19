@@ -94,6 +94,11 @@ struct h2_frame {
     // this frame itself.
     u32 dt_count_before;
     u32 dt_count;
+
+    // The maximum size the dynamic table may reach, i.e. the value of the
+    // peer's `SETTINGS_HEADER_TABLE_SIZE`. Replaying a table into another
+    // decoder means telling it that size too, or it evicts at the wrong point.
+    u32 dt_max_size;
 };
 
 // The number of bytes of a name or a value that are kept in a dynamic table

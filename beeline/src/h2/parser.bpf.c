@@ -772,6 +772,7 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struc
     }
 
     frame->dt_count = dt_info ? dt_info->count : 0;
+    frame->dt_max_size = dt_info ? dt_info->max_size : 0;
 
     if (len > hdr_len + res) return -1;
 

@@ -42,6 +42,24 @@ fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
     f
 }
 
+/// Renders an HPACK dynamic table size update, see `sync_put_size_update` in
+/// `server.bpf.c`.
+fn size_update(size: u32) -> Vec<u8> {
+    if size < 31 {
+        return vec![0x20 | size as u8];
+    }
+
+    let mut out = vec![0x3F];
+    let mut rest = size - 31;
+    while rest >= 128 {
+        out.push((rest & 0x7F) as u8 | 0x80);
+        rest >>= 7;
+    }
+    out.push(rest as u8);
+
+    out
+}
+
 /// Renders a header as the fast path does: a literal header field with
 /// incremental indexing and a new name, both Huffman encoded.
 ///
@@ -55,6 +73,21 @@ fn sync_entry(name: &str, value: &str) -> Vec<u8> {
     out.extend_from_slice(&name);
     out.push(0x80 | value.len() as u8);
     out.extend_from_slice(&value);
+
+    out
+}
+
+/// Renders a whole sync block the way the fast path does: the table is emptied
+/// and resized back, then every entry is replayed into it oldest first.
+///
+/// Must stay in sync with `render_dt_sync` in `server.bpf.c`.
+fn sync_block(max_size: u32, entries: &[(&str, &str)]) -> Vec<u8> {
+    let mut out = size_update(0);
+    out.extend_from_slice(&size_update(max_size));
+
+    for (name, value) in entries {
+        out.extend_from_slice(&sync_entry(name, value));
+    }
 
     out
 }
@@ -130,7 +163,7 @@ async fn a_primed_table_resolves_an_index_the_server_never_saw() {
     let addr = listener.local_addr().expect("local_addr");
 
     // the entry is handed over the way the fast path would have sent it
-    let update = sync_entry(TEST_HEADER.as_str(), TEST_VALUE);
+    let update = sync_block(4096, &[(TEST_HEADER.as_str(), TEST_VALUE)]);
     let server = tokio::spawn(serve_once(listener, vec![update]));
 
     send_request(addr, request_block()).await.expect("client");
@@ -143,6 +176,30 @@ async fn a_primed_table_resolves_an_index_the_server_never_saw() {
         "the header the client sent as a dynamic table index did not resolve"
     );
     assert_eq!(headers.get(http::header::HOST), None);
+}
+
+#[tokio::test]
+async fn a_resync_replaces_a_table_that_holds_evicted_entries() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // the server is first told about entries the client has since evicted, and
+    // then handed the table as it actually stands. only the second block may
+    // survive: if the first were still in the table the entries would sit at
+    // the wrong indices, which is the drift a full resync exists to undo.
+    let stale = sync_block(4096, &[("x-gone", "evicted"), ("x-also-gone", "evicted")]);
+    let fresh = sync_block(4096, &[(TEST_HEADER.as_str(), TEST_VALUE)]);
+    let server = tokio::spawn(serve_once(listener, vec![stale, fresh]));
+
+    send_request(addr, request_block()).await.expect("client");
+
+    let headers = server.await.expect("join").expect("serve");
+
+    assert_eq!(
+        headers.get(&TEST_HEADER),
+        Some(&HeaderValue::from_static(TEST_VALUE)),
+        "the index resolved against a table the resync should have emptied"
+    );
 }
 
 #[tokio::test]
