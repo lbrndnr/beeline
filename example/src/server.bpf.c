@@ -9,6 +9,16 @@
 // server's sockets and answers the ones it has a pre-rendered response for
 // right here, without ever waking up user space.
 
+// Tracks how far an upgraded connection's HTTP/2 handshake has progressed, so
+// that a connection present in the map is known to speak HTTP/2.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, struct ip4_conn);
+    __type(value, int);
+} upgraded_conns SEC(".maps");
+u32 num_upgraded_conns = 0;
+
 // The client sockets of the server, i.e. the ones `msg_verdict` runs on.
 struct {
     __uint(type, BPF_MAP_TYPE_SOCKHASH);
@@ -28,15 +38,32 @@ volatile const u32 port;
 #define MAX_ROUTE_PATH 64
 #define MAX_ROUTE_BODY 4096
 
-// The matches the parser is configured with, in the order in which user space
-// captures them.
-#define H1_PATH_MID 0
-#define H1_CONTENT_LENGTH_MID 1
+// The matches the parsers are configured with, in the order in which user
+// space captures them.
+#define H1_PREFACE_MID 0
+#define H1_PATH_MID 1
+#define H1_CONTENT_LENGTH_MID 2
+#define H2_PATH_MID 0
+#define H2_CONTENT_LENGTH_MID 1
+
+#define H2_SETTINGS_FRAME 0x04
+#define H2_ACK_FLAG 0x01
+
+// how far along an upgraded connection is. only once the handshake completed
+// can the fast path answer on it without preempting the server's SETTINGS.
+#define H2_UPGRADED 1
+#define H2_HANDSHAKED 2
 
 struct route {
     // the response rendered as HTTP/1.1
     u8 body[MAX_ROUTE_BODY];
     u32 body_len;
+
+    // the same response rendered as an h2 HEADERS and DATA frame, along with
+    // the offsets of the stream ids in the two frame headers
+    u8 h2_body[MAX_ROUTE_BODY];
+    u32 h2_body_len;
+    u32 h2_sid_offs[2];
 };
 
 struct route routes[MAX_ROUTES];
@@ -47,23 +74,50 @@ struct route_key {
 };
 
 // Maps a request path to its index in `routes`. Populated by userspace once the
-// program is loaded, as a hash map only exists from then on.
+// program is loaded, as a hash map only exists from then on. A route is
+// reachable under several paths, the plain text one and the huffman encoded one
+// h2 puts on the wire, hence the two entries per route.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, MAX_ROUTES);
+    __uint(max_entries, 2 * MAX_ROUTES);
     __type(key, struct route_key);
     __type(value, u8);
 } route_idx SEC(".maps");
 
 // The functions beeline replaces with an HTTP/1.1 parser.
+BEELINE_MATCHED(matched_h1)
 BEELINE_EXTRACT_MATCH(extract_h1_match)
 BEELINE_H1_PARSE_MSG(parse_h1)
 
+// The functions beeline replaces with an HTTP/2 parser.
+BEELINE_EXTRACT_MATCH(extract_h2_match)
+BEELINE_H2_PARSE_MSG(parse_h2)
+
+// Writes `sid` into the frame header at `off`, where h2 keeps the stream id.
+static __always_inline int write_sid(u8 *data, u8 *data_end, u32 off, u32 sid) {
+    if (off + 4 > MAX_ROUTE_BODY) return -1;
+    bpf_clamp_uminmax(off, 0, MAX_ROUTE_BODY - 4);
+
+    // the bound has to be established on the very pointer that is written
+    // through, deriving another one from `data` loses it again
+    u8 *p = data + off;
+    if (p + 4 > data_end) return -1;
+
+    p[0] = (sid >> 24) & 0xFF;
+    p[1] = (sid >> 16) & 0xFF;
+    p[2] = (sid >> 8) & 0xFF;
+    p[3] = sid & 0xFF;
+
+    return 0;
+}
+
 // Overwrites `msg` in place with `r`'s pre-rendered response and redirects it
 // straight back to the sender's socket (BPF_F_INGRESS), bypassing userspace
-// entirely. Returns 0 on success, < 0 if the response could not be served.
-static __always_inline int serve_route(struct sk_msg_md *msg, struct ip4_conn *ikey, struct route *r) {
-    u32 body_len = r->body_len;
+// entirely. `sid` is the h2 stream to answer on, or 0 to serve the HTTP/1.1
+// rendering. Returns 0 on success, < 0 if the response could not be served.
+static __always_inline int serve_route(struct sk_msg_md *msg, struct ip4_conn *ikey, struct route *r, u32 sid) {
+    bool is_h2 = (sid != 0);
+    u32 body_len = is_h2 ? r->h2_body_len : r->body_len;
     if (body_len == 0 || body_len > MAX_ROUTE_BODY) return -1;
 
     u32 orig_size = msg->size;
@@ -88,7 +142,14 @@ static __always_inline int serve_route(struct sk_msg_md *msg, struct ip4_conn *i
 
         u32 idx = k;
         bpf_clamp_uminmax(idx, 0, MAX_ROUTE_BODY - 1);
-        data[k] = r->body[idx];
+        data[k] = is_h2 ? r->h2_body[idx] : r->body[idx];
+    }
+
+    // the rendered frames carry a zeroed stream id, the one of the request
+    // this responds to is only known here
+    if (is_h2) {
+        if (write_sid(data, data_end, r->h2_sid_offs[0], sid) < 0) return -1;
+        if (write_sid(data, data_end, r->h2_sid_offs[1], sid) < 0) return -1;
     }
 
     if (bpf_msg_redirect_hash(msg, &sock_map, ikey, BPF_F_INGRESS) < 0) return -1;
@@ -102,7 +163,7 @@ static __always_inline int serve_route(struct sk_msg_md *msg, struct ip4_conn *i
 // the pre-rendered response directly from the fast path. Returns 0 if a route
 // was served (the caller should return SK_PASS immediately without further
 // processing `msg`), < 0 otherwise.
-static __always_inline int try_serve_route(struct sk_msg_md *msg, struct ip4_conn *ikey, struct hdr_str *path) {
+static __always_inline int try_serve_route(struct sk_msg_md *msg, struct ip4_conn *ikey, struct hdr_str *path, u32 sid) {
     if (path->len == 0 || path->len > MAX_ROUTE_PATH) return -1;
 
     u32 len = path->len;
@@ -120,7 +181,7 @@ static __always_inline int try_serve_route(struct sk_msg_md *msg, struct ip4_con
     u32 i = *idx;
     bpf_clamp_uminmax(i, 0, MAX_ROUTES - 1);
 
-    return serve_route(msg, ikey, &routes[i]);
+    return serve_route(msg, ikey, &routes[i], sid);
 }
 
 // Returns the value of the captured `Content-Length` header, or -1 if it is
@@ -163,36 +224,94 @@ int msg_verdict(struct sk_msg_md *msg) {
     bool is_downstream = (ikey.remote.ip4 == ip4 && ikey.remote.port == port);
     bpf_debug("Processing %dB msg from [%pI4:%u->%pI4:%u] (downstream: %d)", msg->size, &ikey.local.ip4, ikey.local.port, &ikey.remote.ip4, ikey.remote.port, is_downstream);
 
+    int *conn_state = bpf_map_lookup_elem(&upgraded_conns, &ikey);
+    bool is_h2 = (conn_state != NULL);
+    // the map entry may be reallocated by the update below, so keep a copy
+    int h2_state = is_h2 ? *conn_state : 0;
+    int msg_len = -1;
     struct parse_res pres = { 0 };
     struct hdr_str path = { 0 };
     int path_res = -1;
     u32 sid = 0;
 
-    int msg_len = parse_h1(msg, &pres);
-    if (msg_len > 0) {
-        struct hdr_str content_length = { 0 };
-        if (extract_h1_match(msg, &pres, H1_CONTENT_LENGTH_MID, &content_length) == 0) {
-            bpf_trace("content length: %s", content_length.ptr);
+    if (is_h2) {
+        struct h2_frame frame = { 0 };
+        msg_len = parse_h2(msg, &pres, &frame);
+        if (msg_len >= 0) {
+            sid = frame.sid;
 
-            int res = parse_content_length(&content_length);
-            if (res > 0) msg_len += res;
+            // a client only acks SETTINGS once it has received the server's, so
+            // this is the point from which a response cannot preempt the
+            // handshake anymore
+            if (frame.type == H2_SETTINGS_FRAME && (frame.flags & H2_ACK_FLAG) && h2_state < H2_HANDSHAKED) {
+                bpf_trace("HTTP/2 handshake complete");
+
+                h2_state = H2_HANDSHAKED;
+                bpf_map_update_elem(&upgraded_conns, &ikey, &h2_state, BPF_ANY);
+            }
+
+            struct hdr_str content_length = { 0 };
+            if (extract_h2_match(msg, &pres, H2_CONTENT_LENGTH_MID, &content_length) == 0) {
+                bpf_trace("content length: %s", content_length.ptr);
+
+                int res = parse_content_length(&content_length);
+                if (res > 0) msg_len += res;
+            }
+
+            path_res = extract_h2_match(msg, &pres, H2_PATH_MID, &path);
         }
-
-        path_res = extract_h1_match(msg, &pres, H1_PATH_MID, &path);
-    }
-
-    if (try_serve_route(msg, &ikey, &path) == 0) {
-        // the following is a bit wasteful, so we only do it for debugging purposes
-        #if BPF_TRACING_LEVEL >= BPF_TRACING_LEVEL_TRACE
-
-        char head[32] = {};
-        bpf_probe_read_kernel_str(head, (path.len + 1) & 0x1F, path.ptr);
-
-        bpf_debug("Served request to %s", head);
-        #endif
     }
     else {
-        bpf_error("Failed to serve file");
+        msg_len = parse_h1(msg, &pres);
+        if (msg_len > 0) {
+            if (matched_h1(msg, &pres, H1_PREFACE_MID)) {
+                bpf_trace("Upgrading connection to HTTP/2");
+
+                int val = H2_UPGRADED;
+                bpf_map_update_elem(&upgraded_conns, &ikey, &val, BPF_ANY);
+                num_upgraded_conns++;
+
+                // the H2 preface is 24 bytes long
+                bpf_msg_apply_bytes(msg, 24);
+
+                return SK_PASS;
+            }
+
+            struct hdr_str content_length = { 0 };
+            if (extract_h1_match(msg, &pres, H1_CONTENT_LENGTH_MID, &content_length) == 0) {
+                bpf_trace("content length: %s", content_length.ptr);
+
+                int res = parse_content_length(&content_length);
+                if (res > 0) msg_len += res;
+            }
+
+            path_res = extract_h1_match(msg, &pres, H1_PATH_MID, &path);
+        }
+    }
+
+    // answering before the h2 handshake completed would preempt the server's
+    // SETTINGS, so such requests are left to userspace
+    bool can_serve = (path_res == 0) && (!is_h2 || h2_state >= H2_HANDSHAKED);
+    if (path_res == 0 && !can_serve) {
+        bpf_debug("Not serving request, HTTP/2 handshake is still in flight");
+    }
+
+    if (can_serve) {
+        if (try_serve_route(msg, &ikey, &path, sid) == 0) {
+            // the following is a bit wasteful, so we only do it for debugging purposes
+            #if BPF_TRACING_LEVEL >= BPF_TRACING_LEVEL_TRACE
+
+            char head[32] = {};
+            bpf_probe_read_kernel_str(head, (path.len + 1) & 0x1F, path.ptr);
+
+            bpf_debug("Served request to %s", head);
+            #endif
+
+            return SK_PASS;
+        }
+        else {
+            bpf_error("Failed to serve file");
+        }
     }
 
     bpf_msg_apply_bytes(msg, msg_len);
@@ -200,8 +319,6 @@ int msg_verdict(struct sk_msg_md *msg) {
     return SK_PASS;
 }
 
-// Adds every socket connected to the server to `sock_map`, so that
-// `msg_verdict` sees the requests travelling on them.
 SEC("sockops")
 int monitor_sockets(struct bpf_sock_ops *ops) {
     if (ops->op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB || ops->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {

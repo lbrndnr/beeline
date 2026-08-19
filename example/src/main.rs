@@ -5,7 +5,7 @@
 //! files listed in `routes` before they ever reach user space.
 
 use axum::http::StatusCode;
-use fastpath::Server;
+use fastpath::{OpenObject, Server};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tower_http::{
@@ -14,7 +14,6 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use xbpf::OpenObject;
 
 mod fastpath;
 
