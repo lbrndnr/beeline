@@ -4,8 +4,6 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
-#define __sink(expr) asm volatile("" : "+g"(expr))
-
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
@@ -34,65 +32,12 @@ struct {
     __type(value, char[128]);
 } matches SEC(".maps");
 
-__noinline bool matched_h1(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx) {
-    bool ret = false;
+BEELINE_MATCHED(matched_h1)
+BEELINE_EXTRACT_MATCH(extract_h1_match)
+BEELINE_H1_PARSE_MSG(parse_h1)
 
-	__sink(msg);
-	__sink(pres);
-	__sink(idx);
-	__sink(ret);
-
-	return ret;
-}
-
-__noinline int extract_h1_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
-    int ret = 0;
-
-	__sink(msg);
-	__sink(pres);
-	__sink(idx);
-	__sink(str);
-	__sink(ret);
-
-	return ret;
-}
-
-__noinline int parse_h1(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
-   	int ret = 0;
-
-	__sink(msg);
-	__sink(pres);
-	__sink(ret);
-
-	bpf_msg_pull_data(msg, 0, msg->size, 0);
-
-	return ret;
-}
-
-__noinline int extract_h2_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
-    int ret = 0;
-
-	__sink(msg);
-	__sink(pres);
-	__sink(idx);
-	__sink(str);
-	__sink(ret);
-
-	return ret;
-}
-
-__noinline int parse_h2(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struct h2_frame *frame __arg_nonnull) {
-    int ret = 0;
-
-	__sink(msg);
-	__sink(pres);
-	__sink(frame);
-	__sink(ret);
-
-	bpf_msg_pull_data(msg, 0, msg->size, 0);
-
-	return ret;
-}
+BEELINE_EXTRACT_MATCH(extract_h2_match)
+BEELINE_H2_PARSE_MSG(parse_h2)
 
 SEC("sk_msg")
 int msg_verdict(struct sk_msg_md *msg) {

@@ -5,8 +5,6 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
-#define __sink(expr) asm volatile("" : "+g"(expr))
-
 struct {
     __uint(type, BPF_MAP_TYPE_SOCKHASH);
     __uint(max_entries, 16384);
@@ -50,31 +48,8 @@ struct {
     __type(value, u8);
 } route_idx SEC(".maps");
 
-__noinline int extract_h1_match(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx, struct hdr_str* str __arg_nonnull) {
-    int ret = -1;
-
-	__sink(msg);
-	__sink(pres);
-	__sink(idx);
-	__sink(str);
-	__sink(ret);
-
-	return ret;
-}
-
-__noinline int parse_h1(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {
-   	int ret = -1;
-
-	__sink(msg);
-	__sink(pres);
-	__sink(ret);
-
-	bpf_msg_pull_data(msg, 0, msg->size, 0);
-
-	return ret;
-}
-
-
+BEELINE_EXTRACT_MATCH(extract_h1_match)
+BEELINE_H1_PARSE_MSG(parse_h1)
 
 // Overwrites `msg` in place with `r`'s pre-rendered response and redirects it
 // straight back to the sender's socket (BPF_F_INGRESS), bypassing userspace
