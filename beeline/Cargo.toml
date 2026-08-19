@@ -5,26 +5,26 @@ edition = "2024"
 
 [features]
 default = ["h1"]
+build = []
 h1 = []
 h2 = []
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 as-bytes = "0.2.0"
-bytes = "1.11.1"
-http = "1.4.2"
+bytes = "1.12.1"
+http = "1.5.0"
 httlib-huffman = "0.3.4"
-libc = "0.2.186"
+libc = "0.2.189"
 plain = "0.2.3"
 tracing = "0.1.44"
 xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
 
 [build-dependencies]
 xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
-beeline-include = { path = "../beeline-include" }
 
 [dev-dependencies]
 reqwest = "0.13.4"
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.53", features = ["full"] }
 utils = { path = "../utils" }
-h2 = "0.4.15"
+h2 = "0.4.16"

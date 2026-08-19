@@ -3,6 +3,9 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use xbpf::libbpf::{Mut, OpenProgramImpl};
 
+#[cfg(feature = "build")]
+pub mod build;
+
 #[cfg(feature = "h1")]
 pub mod h1;
 

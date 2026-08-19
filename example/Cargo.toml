@@ -11,7 +11,7 @@ keywords.workspace = true
 [dependencies]
 axum = { version = "0.8.9", features = ["http2"] }
 beeline = { path = "../beeline", features = ["h1", "h2"] }
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.53", features = ["full"] }
 httlib-huffman = "0.3.4"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -24,4 +24,4 @@ xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
 
 [build-dependencies]
 xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
-beeline-include = { path = "../beeline-include" }
+beeline = { path = "../beeline", features = ["build"] }

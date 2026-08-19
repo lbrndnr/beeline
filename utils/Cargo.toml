@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 as-bytes = "0.2.0"
 axum = { version = "0.8.9", features = ["http2"] }
 beeline = { path = "../beeline", features = ["h1", "h2"] }
-bytes = "1.11.1"
-libc = "0.2.186"
-tokio = { version = "1.52", features = ["full"] }
+bytes = "1.12.1"
+libc = "0.2.189"
+tokio = { version = "1.53", features = ["full"] }
 bpf-tracing = "0.0.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -18,4 +18,4 @@ xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
 
 [build-dependencies]
 xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
-beeline-include = { path = "../beeline-include" }
+beeline = { path = "../beeline", features = ["build"] }

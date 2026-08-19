@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["beeline", "beeline-include", "example", "utils"]
+members = ["beeline", "example", "utils"]
 
 [workspace.package]
 license = "GPL-3.0"
