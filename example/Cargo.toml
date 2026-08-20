@@ -11,8 +11,7 @@ keywords.workspace = true
 [dependencies]
 axum = { version = "0.8.9", features = ["http2"] }
 clap = { version = "4", features = ["derive"] }
-# the connection loop drives h2 itself so that it can reach the dynamic table,
-# see the [patch.crates-io] section of the workspace manifest
+# h2 is patched to allow beeline to modify the dynamic table
 h2 = "0.4.16"
 http = "1.5"
 http-body-util = "0.1"

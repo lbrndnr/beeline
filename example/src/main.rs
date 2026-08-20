@@ -1,10 +1,4 @@
 //! A static file server whose requests can be answered from the kernel.
-//!
-//! The server itself is an ordinary axum application. Started with
-//! `--with-ebpf`, [`fastpath::Server`] attaches a Beeline parser to its sockets,
-//! which answers the requests for the files listed in `routes` before they ever
-//! reach user space. Without it no eBPF is loaded at all and every request is
-//! answered the ordinary way, which is what the two are worth comparing.
 
 use axum::http::StatusCode;
 use clap::Parser;
@@ -26,24 +20,18 @@ mod fastpath;
 #[derive(Parser)]
 #[command(about, long_about = None)]
 struct Args {
-    /// Attach the eBPF fast path, so that the assets that fit its routing table
-    /// are answered in the kernel. Without it the server loads no eBPF at all.
+    /// Disable the eBPF fast path.
     #[arg(long)]
-    with_ebpf: bool,
+    no_fastpath: bool,
 
     /// The address to listen on.
-    #[arg(long, default_value = "127.0.0.1:8080")]
+    #[arg(short, long, default_value = "127.0.0.1:8080")]
     addr: SocketAddr,
 }
 
-/// Every asset the page is made of, offered to the fast path as a whole.
-///
-/// The images are far too large for its routing table and it says so and
-/// declines them, see [`Server::attach`]; which of these end up answered in the
-/// kernel is its decision to make rather than one to second guess here.
+/// All assets that are served with the fast path.
 fn fastpath_routes(assets_dir: &str) -> HashMap<String, PathBuf> {
     [
-        "/index.html",
         "/style.css",
         "/script.js",
         "/honeycomb.png",
@@ -89,12 +77,12 @@ async fn main() {
     // the fast path has to outlive the server, and nothing of it is loaded
     // unless it was asked for
     let mut open_obj = OpenObject::new();
-    let _fastpath = if args.with_ebpf {
+    let _fastpath = if args.no_fastpath {
+        tracing::info!("Running without the eBPF fast path");
+        None
+    } else {
         let routes = fastpath_routes(assets_dir);
         Some(Server::attach(args.addr, &mut open_obj, routes).expect("attach"))
-    } else {
-        tracing::info!("Running without the eBPF fast path, pass --with-ebpf to attach it");
-        None
     };
 
     let listener = TcpListener::bind(args.addr).await.unwrap();

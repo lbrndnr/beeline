@@ -2,12 +2,6 @@
 resolver = "2"
 members = ["beeline", "example", "utils"]
 
-# The example server reaches into the HPACK dynamic table of a connection to
-# replay the header blocks the fast path answered without it, which h2 does not
-# expose. This fork adds the accessors for it, see its BEELINE PATCH comments.
-[patch.crates-io]
-h2 = { git = "https://github.com/lbrndnr/h2" }
-
 [workspace.package]
 license = "GPL-3.0"
 authors = [
@@ -16,3 +10,6 @@ authors = [
 repository = "https://github.com/lbrndnr/beeline"
 readme = "README.md"
 keywords = ["ebpf", "bpf", "libbpf", "l7"]
+
+[patch.crates-io]
+h2 = { git = "https://github.com/lbrndnr/h2" }

@@ -34,7 +34,7 @@ fn huffman_encode(val: &str) -> Vec<u8> {
 // Must stay in sync with the corresponding `#define`s in server.bpf.c.
 const MAX_ROUTES: usize = 16;
 const MAX_ROUTE_PATH: usize = 64;
-const MAX_ROUTE_BODY: usize = 16384;
+const MAX_ROUTE_BODY: usize = 32768;
 
 /// The fast path of the example server.
 ///

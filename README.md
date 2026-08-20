@@ -53,6 +53,16 @@ In the logs of the server, you should find a line that indicates that the reques
 Served request
 ```
 
+To benchmark the server, run the following:
+```bash
+RUST_LOG= cargo run -r --bin example
+```
+
+In a new window, you can now run the load test:
+```bash
+k6 run example/k6/load.js
+```
+
 ## Citation
 
 If you use this library to conduct your own research, please cite the full paper as follows:
