@@ -36,7 +36,7 @@ volatile const u32 port;
 // userspace before the program is attached.
 #define MAX_ROUTES 16
 #define MAX_ROUTE_PATH 64
-#define MAX_ROUTE_BODY 4096
+#define MAX_ROUTE_BODY 16384
 
 // The matches the parsers are configured with, in the order in which user
 // space captures them.

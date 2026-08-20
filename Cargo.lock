@@ -461,6 +461,7 @@ dependencies = [
  "axum",
  "beeline",
  "bytes",
+ "clap",
  "h2",
  "httlib-huffman",
  "http",

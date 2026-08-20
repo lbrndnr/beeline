@@ -35,7 +35,7 @@ fn huffman_encode(val: &str) -> Vec<u8> {
 // Must stay in sync with the corresponding `#define`s in server.bpf.c.
 const MAX_ROUTES: usize = 16;
 const MAX_ROUTE_PATH: usize = 64;
-const MAX_ROUTE_BODY: usize = 4096;
+const MAX_ROUTE_BODY: usize = 16384;
 
 /// The fast path of the example server.
 ///
@@ -156,18 +156,23 @@ impl<'obj> Server<'obj> {
         let mut prepared = Vec::with_capacity(routes.len());
         for (path, file) in routes.iter() {
             let keys = [path.as_bytes().to_vec(), huffman_encode(path)];
-            for key in &keys {
-                if key.len() > MAX_ROUTE_PATH {
-                    bail!("fastpath route path `{path}` is longer than {MAX_ROUTE_PATH} bytes");
-                }
+            if keys.iter().any(|key| key.len() > MAX_ROUTE_PATH) {
+                bail!("fastpath route path `{path}` is longer than {MAX_ROUTE_PATH} bytes");
             }
 
             let body = render_response(file)?;
             let (h2_body, h2_sid_offs) = render_h2_response(file)?;
-            if body.len() > MAX_ROUTE_BODY || h2_body.len() > MAX_ROUTE_BODY {
-                bail!("fastpath response for `{path}` is longer than {MAX_ROUTE_BODY} bytes");
+
+            // a response too large to pre-render is left to the server rather
+            // than refused: a path the fast path does not know is one it passes
+            // on, which is exactly what should happen to it
+            let len = body.len().max(h2_body.len());
+            if len > MAX_ROUTE_BODY {
+                info!("Not serving `{path}` from the fast path, {len}B exceeds {MAX_ROUTE_BODY}B");
+                continue;
             }
 
+            debug!("Serving `{path}` from the fast path");
             prepared.push((keys, body, h2_body, h2_sid_offs));
         }
 
