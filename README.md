@@ -67,7 +67,7 @@ cargo install oha
 
 # to test http1 performance
 oha -c 100 -q 1000 -z 30s --latency-correction --urls-from-file example/load.txt
-
+# to test http2 performance
 oha -c 100 -q 1000 -z 30s --http2 --latency-correction --urls-from-file example/load.txt
 ```
 
