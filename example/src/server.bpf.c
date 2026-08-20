@@ -196,50 +196,25 @@ static __always_inline int sync_put_byte(struct dt_sync_buf *buf, u8 c) {
     return 0;
 }
 
-// Writes an HPACK dynamic table size update of `size` (RFC 7541 section 6.3),
-// a five bit prefixed integer under the pattern `001`.
-static __always_inline int sync_put_size_update(struct dt_sync_buf *buf, u32 size) {
-    if (size < 31) return sync_put_byte(buf, 0x20 | size);
-
-    if (sync_put_byte(buf, 0x3F) < 0) return -1;
-
-    // the remainder goes out seven bits at a time, every byte but the last
-    // carrying a continuation bit. a u32 needs at most five of them.
-    u32 rest = size - 31;
-    u32 i;
-    bpf_for(i, 0, 5) {
-        if (rest < 128) return sync_put_byte(buf, rest);
-
-        if (sync_put_byte(buf, (rest & 0x7F) | 0x80) < 0) return -1;
-        rest >>= 7;
-    }
-
-    return -1;
-}
-
 // Renders the whole of `conn`'s dynamic table into `buf` as an HPACK block,
 // `n` entries, oldest first, so that a decoder replaying the block ends up
 // holding exactly what the fast path last saw the client holding.
 //
-// The block opens by resizing the table to nothing and back to `max_size`,
-// which empties the decoder's table before the entries are replayed into it.
-// That is what makes this a resync rather than a delta: a request the fast path
-// answered may have evicted entries as well as added them, and only starting
-// from empty puts a decoder that still holds the evicted ones right again. A
-// size update is only legal at the start of a block, which is where these are.
+// This is a resync rather than a delta: a request the fast path answered may
+// have evicted entries as well as added them, and only a decoder that starts
+// from an empty table ends up agreeing with the client again. Emptying it is
+// the reader's job, see `Decoder::prime` in the patched `vendor/h2` -- the size
+// the table has to be restored to afterwards is the one the reader announced,
+// which is not something the fast path knows.
 //
 // Every entry is written as a literal header field with incremental indexing
 // and a new name (RFC 7541 section 6.2.1), which is the representation that
 // makes a decoder add it to its dynamic table. Names and values are copied
-// straight out of the mirrored table, where they are already stored Huffman
-// encoded, so both length prefixes carry the H bit.
+// straight out of the mirrored table, in whichever form the client sent them.
 //
 // Returns 0 if the whole table was written, -1 if an entry could not be read or
 // does not fit, in which case `buf` is left incomplete and must be discarded.
-static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct ip4_conn *conn, u32 n, u32 max_size) {
-    if (sync_put_size_update(buf, 0) < 0) return -1;
-    if (sync_put_size_update(buf, max_size) < 0) return -1;
-
+static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct ip4_conn *conn, u32 n) {
     u32 i;
     bpf_for(i, 0, n) {
         // the entries to replay are the `n` most recent ones, i.e. HPACK
@@ -257,10 +232,15 @@ static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct 
             return -1;
         }
 
+        // the entry is copied over in whatever form it arrived in, so the H bit
+        // has to say which one that was rather than assume Huffman
+        u8 key_huff = buf->hf.key_huff ? 0x80 : 0;
+        u8 val_huff = buf->hf.val_huff ? 0x80 : 0;
+
         if (sync_put_byte(buf, 0x40) < 0) return -1;
-        if (sync_put_byte(buf, 0x80 | key_len) < 0) return -1;
+        if (sync_put_byte(buf, key_huff | key_len) < 0) return -1;
         if (sync_put(buf, buf->hf.key, key_len) < 0) return -1;
-        if (sync_put_byte(buf, 0x80 | val_len) < 0) return -1;
+        if (sync_put_byte(buf, val_huff | val_len) < 0) return -1;
         if (sync_put(buf, buf->hf.val, val_len) < 0) return -1;
     }
 
@@ -277,7 +257,7 @@ static __always_inline int render_dt_sync(struct dt_sync_buf *buf, const struct 
 //
 // Returns the number of bytes prepended, or -1 if the frame could not be
 // built, in which case `msg` is left untouched.
-static __always_inline int prepend_dt_sync(struct sk_msg_md *msg, const struct ip4_conn *conn, u32 n, u32 max_size) {
+static __always_inline int prepend_dt_sync(struct sk_msg_md *msg, const struct ip4_conn *conn, u32 n) {
     u32 zero = 0;
     struct dt_sync_buf *buf = bpf_map_lookup_elem(&dt_sync_scratch, &zero);
     if (!buf) return -1;
@@ -285,7 +265,7 @@ static __always_inline int prepend_dt_sync(struct sk_msg_md *msg, const struct i
     // the frame header is written once the body's length is known, so the body
     // is built up behind it
     buf->len = 0;
-    if (render_dt_sync(buf, conn, n, max_size) < 0) return -1;
+    if (render_dt_sync(buf, conn, n) < 0) return -1;
 
     u32 body_len = buf->len;
     if (body_len == 0 || body_len > MAX_SYNC_BODY) return -1;
@@ -479,7 +459,6 @@ int msg_verdict(struct sk_msg_md *msg) {
     // to replay the mirrored one if they have
     bool dt_stale = false;
     u32 dt_count = 0;
-    u32 dt_max_size = 0;
 
     if (is_h2) {
         struct h2_frame frame = { 0 };
@@ -495,7 +474,6 @@ int msg_verdict(struct sk_msg_md *msg) {
             // message itself adds are none of the sync frame's business, user
             // space adds those when it decodes it.
             dt_count = frame.dt_count_before;
-            dt_max_size = frame.dt_max_size;
 
             // a client only acks SETTINGS once it has received the server's, so
             // this is the point from which a response cannot preempt the
@@ -582,7 +560,7 @@ int msg_verdict(struct sk_msg_md *msg) {
     // rebuilds the table from it and then decodes the message against it,
     // ending up exactly where the fast path's mirror is.
     if (is_h2 && msg_len >= 0 && dt_stale) {
-        int synced = prepend_dt_sync(msg, &ikey, dt_count, dt_max_size);
+        int synced = prepend_dt_sync(msg, &ikey, dt_count);
         if (synced < 0) {
             bpf_error("Failed to sync dynamic table, dropping connection");
 

@@ -62,6 +62,12 @@ struct hdr_match {
     u16 idx;
     u16 len;
     bool in_msg;
+
+    // Whether the bytes the match points at are Huffman coded. HPACK lets a
+    // peer send either form and says which with the top bit of a string's
+    // length prefix, so this cannot be assumed: `accept: */*`, for one, is
+    // shorter spelled out and curl sends it that way.
+    bool huff;
 };
 
 // A borrowed string, pointing either into the parsed message or into one of the
@@ -95,10 +101,6 @@ struct h2_frame {
     u32 dt_count_before;
     u32 dt_count;
 
-    // The maximum size the dynamic table may reach, i.e. the value of the
-    // peer's `SETTINGS_HEADER_TABLE_SIZE`. Replaying a table into another
-    // decoder means telling it that size too, or it evicts at the wrong point.
-    u32 dt_max_size;
 };
 
 // The number of bytes of a name or a value that are kept in a dynamic table
@@ -106,13 +108,17 @@ struct h2_frame {
 // verifier. Must stay in sync with `HEADER_FIELD_MAXLEN` of h2/parser.bpf.c.
 #define BEELINE_H2_FIELD_MAXLEN 128
 
-// A single field of the HPACK static or dynamic table, stored Huffman encoded,
-// i.e. the way it appears on the wire.
+// A single field of the HPACK static or dynamic table, stored the way it
+// appeared on the wire. `key_huff` and `val_huff` say whether that was the
+// Huffman coded form; a peer may send either, so a reader that hands an entry
+// on has to say which one it is holding.
 struct header_field {
     u8 key[BEELINE_H2_FIELD_MAXLEN];
     u8 key_len;
     u8 val[BEELINE_H2_FIELD_MAXLEN];
     u8 val_len;
+    u8 key_huff;
+    u8 val_huff;
 };
 
 // A single transition of the DFA a parser walks: the state it leads to, and the

@@ -42,51 +42,49 @@ fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
     f
 }
 
-/// Renders an HPACK dynamic table size update, see `sync_put_size_update` in
-/// `server.bpf.c`.
-fn size_update(size: u32) -> Vec<u8> {
-    if size < 31 {
-        return vec![0x20 | size as u8];
-    }
+/// How a string was put on the wire. HPACK lets a peer choose per string, and
+/// the fast path copies whichever form it stored, so both have to be covered.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Coding {
+    Huffman,
+    Raw,
+}
 
-    let mut out = vec![0x3F];
-    let mut rest = size - 31;
-    while rest >= 128 {
-        out.push((rest & 0x7F) as u8 | 0x80);
-        rest >>= 7;
-    }
-    out.push(rest as u8);
+/// Renders a string with its length prefix, the top bit saying whether what
+/// follows is Huffman coded.
+fn sync_str(s: &str, coding: Coding) -> Vec<u8> {
+    let (bytes, flag) = match coding {
+        Coding::Huffman => (huffman_encode(s), 0x80),
+        Coding::Raw => (s.as_bytes().to_vec(), 0x00),
+    };
+
+    let mut out = vec![flag | bytes.len() as u8];
+    out.extend_from_slice(&bytes);
 
     out
 }
 
 /// Renders a header as the fast path does: a literal header field with
-/// incremental indexing and a new name, both Huffman encoded.
+/// incremental indexing and a new name.
 ///
 /// Must stay in sync with `render_dt_sync` in `server.bpf.c`.
-fn sync_entry(name: &str, value: &str) -> Vec<u8> {
-    let name = huffman_encode(name);
-    let value = huffman_encode(value);
-
+fn sync_entry(name: &str, value: &str, coding: Coding) -> Vec<u8> {
     let mut out = vec![0x40];
-    out.push(0x80 | name.len() as u8);
-    out.extend_from_slice(&name);
-    out.push(0x80 | value.len() as u8);
-    out.extend_from_slice(&value);
+    out.extend_from_slice(&sync_str(name, Coding::Huffman));
+    out.extend_from_slice(&sync_str(value, coding));
 
     out
 }
 
-/// Renders a whole sync block the way the fast path does: the table is emptied
-/// and resized back, then every entry is replayed into it oldest first.
+/// Renders a whole sync block the way the fast path does: every entry replayed
+/// oldest first. Emptying the table beforehand is the reader's job, see
+/// `Decoder::prime`.
 ///
 /// Must stay in sync with `render_dt_sync` in `server.bpf.c`.
-fn sync_block(max_size: u32, entries: &[(&str, &str)]) -> Vec<u8> {
-    let mut out = size_update(0);
-    out.extend_from_slice(&size_update(max_size));
-
-    for (name, value) in entries {
-        out.extend_from_slice(&sync_entry(name, value));
+fn sync_block(entries: &[(&str, &str, Coding)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (name, value, coding) in entries {
+        out.extend_from_slice(&sync_entry(name, value, *coding));
     }
 
     out
@@ -163,7 +161,7 @@ async fn a_primed_table_resolves_an_index_the_server_never_saw() {
     let addr = listener.local_addr().expect("local_addr");
 
     // the entry is handed over the way the fast path would have sent it
-    let update = sync_block(4096, &[(TEST_HEADER.as_str(), TEST_VALUE)]);
+    let update = sync_block(&[(TEST_HEADER.as_str(), TEST_VALUE, Coding::Huffman)]);
     let server = tokio::spawn(serve_once(listener, vec![update]));
 
     send_request(addr, request_block()).await.expect("client");
@@ -179,6 +177,54 @@ async fn a_primed_table_resolves_an_index_the_server_never_saw() {
 }
 
 #[tokio::test]
+async fn a_value_that_was_not_huffman_coded_survives_the_handover() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // curl sends `accept: */*` spelled out rather than Huffman coded, because
+    // Huffman does not make it any shorter, and indexes it. Copying it back out
+    // with the H bit set regardless is what made the handover fail with
+    // "unable to maintain the header compression context": the decoder tried to
+    // read `*/*` as Huffman.
+    let update = sync_block(&[("accept", "*/*", Coding::Raw)]);
+    let server = tokio::spawn(serve_once(listener, vec![update]));
+
+    send_request(addr, request_block()).await.expect("client");
+
+    let headers = server.await.expect("join").expect("serve");
+
+    assert_eq!(
+        headers.get(http::header::ACCEPT),
+        Some(&HeaderValue::from_static("*/*")),
+        "a value that was not Huffman coded did not survive the handover"
+    );
+}
+
+#[tokio::test]
+async fn a_mix_of_coded_and_spelled_out_entries_survives_the_handover() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // a real request carries both kinds, so the H bit has to be tracked per
+    // string rather than assumed for the block
+    let update = sync_block(&[
+        ("accept", "*/*", Coding::Raw),
+        (TEST_HEADER.as_str(), TEST_VALUE, Coding::Huffman),
+    ]);
+    let server = tokio::spawn(serve_once(listener, vec![update]));
+
+    send_request(addr, request_block()).await.expect("client");
+
+    let headers = server.await.expect("join").expect("serve");
+
+    // the request indexes the most recent entry, which is the Huffman one
+    assert_eq!(
+        headers.get(&TEST_HEADER),
+        Some(&HeaderValue::from_static(TEST_VALUE))
+    );
+}
+
+#[tokio::test]
 async fn a_resync_replaces_a_table_that_holds_evicted_entries() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");
@@ -187,8 +233,11 @@ async fn a_resync_replaces_a_table_that_holds_evicted_entries() {
     // then handed the table as it actually stands. only the second block may
     // survive: if the first were still in the table the entries would sit at
     // the wrong indices, which is the drift a full resync exists to undo.
-    let stale = sync_block(4096, &[("x-gone", "evicted"), ("x-also-gone", "evicted")]);
-    let fresh = sync_block(4096, &[(TEST_HEADER.as_str(), TEST_VALUE)]);
+    let stale = sync_block(&[
+        ("x-gone", "evicted", Coding::Huffman),
+        ("x-also-gone", "evicted", Coding::Huffman),
+    ]);
+    let fresh = sync_block(&[(TEST_HEADER.as_str(), TEST_VALUE, Coding::Huffman)]);
     let server = tokio::spawn(serve_once(listener, vec![stale, fresh]));
 
     send_request(addr, request_block()).await.expect("client");

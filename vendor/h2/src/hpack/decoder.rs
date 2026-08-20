@@ -185,6 +185,20 @@ impl Decoder {
     ///
     /// This is a deliberate hack and no part of h2's supported surface.
     pub fn prime(&mut self, block: &[u8]) -> Result<(), DecoderError> {
+        // a pending size update has to land before the table is rebuilt, or the
+        // size it is restored to below is the one that is on its way out
+        if let Some(size) = self.max_size_update.take() {
+            self.last_max_update = size;
+        }
+
+        // the table is emptied first, so that what `block` replays into it is
+        // all it holds afterwards. this is done here rather than with a size
+        // update in `block` itself because the size it has to be restored to is
+        // the one this decoder announced, which the sender does not know: a
+        // size update naming anything larger is a decoding error.
+        self.table.set_max_size(0);
+        self.table.set_max_size(self.last_max_update);
+
         let mut buf = BytesMut::from(block);
         let mut src = Cursor::new(&mut buf);
 
@@ -600,6 +614,16 @@ impl Table {
 }
 
 // ===== impl DecoderError =====
+
+// BEELINE PATCH: `prime_dynamic_table` hands this back, so it has to be
+// reportable like any other error a caller propagates.
+impl std::fmt::Display for DecoderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "hpack decoding failed: {self:?}")
+    }
+}
+
+impl std::error::Error for DecoderError {}
 
 impl From<Utf8Error> for DecoderError {
     fn from(_: Utf8Error) -> DecoderError {

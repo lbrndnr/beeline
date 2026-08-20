@@ -18,9 +18,9 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use std::{convert::Infallible, future::poll_fn};
+use std::{convert::Infallible, future::poll_fn, task::Poll};
 use tower::ServiceExt;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 /// Serves `app` on `listener` until the process is stopped.
 pub async fn serve(listener: BeelineListener, app: Router) {
@@ -86,13 +86,18 @@ async fn serve_h2(stream: BeelineStream, sync: SyncHandle, app: Router) -> anyho
                 debug!("applying a {}B dynamic table update", block.len());
 
                 if let Err(e) = conn.prime_dynamic_table(&block) {
-                    // the decoder is now out of step with the client for good,
-                    // so there is nothing to do but let the connection fail
-                    warn!("failed to apply a dynamic table update: {e}");
+                    // carrying on would decode every later request against a
+                    // table that no longer matches the client's, so the
+                    // connection ends here rather than serving nonsense
+                    return Poll::Ready(Some(Err(anyhow::anyhow!(
+                        "failed to apply a {}B dynamic table update: {e:?}",
+                        block.len()
+                    ))));
                 }
             }
 
             conn.poll_accept(cx)
+                .map(|res| res.map(|res| res.map_err(anyhow::Error::from)))
         })
         .await;
 

@@ -201,6 +201,9 @@ impl Parser {
                 key_len,
                 val: hf_val.try_into().unwrap(),
                 val_len,
+                // the static table is written out Huffman coded above
+                key_huff: 1,
+                val_huff: 1,
             };
 
             let idx = unsafe { idx.as_bytes() };

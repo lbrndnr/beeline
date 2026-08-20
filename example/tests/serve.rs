@@ -41,39 +41,36 @@ fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
     f
 }
 
-/// Renders an HPACK dynamic table size update, see `sync_put_size_update` in
-/// `server.bpf.c`.
-fn size_update(size: u32) -> Vec<u8> {
-    if size < 31 {
-        return vec![0x20 | size as u8];
-    }
+/// How a string was put on the wire. HPACK lets a peer choose per string, and
+/// the fast path copies whichever form it stored.
+#[derive(Clone, Copy)]
+enum Coding {
+    Huffman,
+    Raw,
+}
 
-    let mut out = vec![0x3F];
-    let mut rest = size - 31;
-    while rest >= 128 {
-        out.push((rest & 0x7F) as u8 | 0x80);
-        rest >>= 7;
-    }
-    out.push(rest as u8);
+/// Renders a string with its length prefix, the top bit saying whether what
+/// follows is Huffman coded.
+fn sync_str(s: &str, coding: Coding) -> Vec<u8> {
+    let (bytes, flag) = match coding {
+        Coding::Huffman => (huffman_encode(s), 0x80u8),
+        Coding::Raw => (s.as_bytes().to_vec(), 0x00),
+    };
+
+    let mut out = vec![flag | bytes.len() as u8];
+    out.extend_from_slice(&bytes);
 
     out
 }
 
-/// Renders a whole sync block the way `render_dt_sync` in `server.bpf.c` does:
-/// the table is emptied and resized back, then the entries are replayed.
-fn sync_block(max_size: u32, entries: &[(&str, &str)]) -> Vec<u8> {
-    let mut out = size_update(0);
-    out.extend_from_slice(&size_update(max_size));
-
-    for (name, value) in entries {
-        let name = huffman_encode(name);
-        let value = huffman_encode(value);
-
+/// Renders a sync block the way `render_dt_sync` in `server.bpf.c` does: every
+/// entry as a literal with incremental indexing, oldest first.
+fn sync_block(entries: &[(&str, &str, Coding)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (name, value, coding) in entries {
         out.push(0x40);
-        out.push(0x80 | name.len() as u8);
-        out.extend_from_slice(&name);
-        out.push(0x80 | value.len() as u8);
-        out.extend_from_slice(&value);
+        out.extend_from_slice(&sync_str(name, Coding::Huffman));
+        out.extend_from_slice(&sync_str(value, *coding));
     }
 
     out
@@ -199,12 +196,30 @@ async fn applies_a_dynamic_table_update_before_the_request_that_needs_it() {
 
     // the client indexed this on a request the fast path answered, so the
     // server only learns about it from the update
-    let update = sync_block(4096, &[(TEST_HEADER, TEST_VALUE)]);
+    let update = sync_block(&[(TEST_HEADER, TEST_VALUE, Coding::Huffman)]);
     let got = request_h2(addr, request_block("/echo", true), Some(update)).await;
 
     assert!(
         contains(&got, TEST_VALUE.as_bytes()),
         "the indexed header did not reach the application: {got:?}"
+    );
+}
+
+#[tokio::test]
+async fn applies_an_update_whose_value_was_not_huffman_coded() {
+    let addr = start().await;
+
+    // curl spells `accept: */*` out rather than Huffman coding it and indexes
+    // it, so a handover that assumes Huffman fails on an ordinary request
+    let update = sync_block(&[
+        ("accept", "*/*", Coding::Raw),
+        (TEST_HEADER, TEST_VALUE, Coding::Huffman),
+    ]);
+    let got = request_h2(addr, request_block("/echo", true), Some(update)).await;
+
+    assert!(
+        contains(&got, TEST_VALUE.as_bytes()),
+        "the handover failed on a value that was not Huffman coded: {got:?}"
     );
 }
 

@@ -481,12 +481,15 @@ where
     ///
     /// This is a deliberate hack for that example and no part of h2's
     /// supported surface.
-    pub fn prime_dynamic_table(&mut self, block: &[u8]) -> Result<(), crate::Error> {
-        self.connection.prime_recv_hpack(block).map_err(|_| {
-            // a block that does not decode leaves the table in a state neither
-            // side can reason about, which is what COMPRESSION_ERROR is for
-            proto::Error::user_go_away(Reason::COMPRESSION_ERROR).into()
-        })
+    pub fn prime_dynamic_table(
+        &mut self,
+        block: &[u8],
+    ) -> Result<(), crate::hpack::DecoderError> {
+        // the decoder's own error is handed back rather than folded into a
+        // connection error: which way the block failed to decode is the only
+        // thing that says what is wrong with it, and a bare COMPRESSION_ERROR
+        // throws that away
+        self.connection.prime_recv_hpack(block)
     }
 
     /// Set a new `INITIAL_WINDOW_SIZE` setting (in octets) for stream-level
