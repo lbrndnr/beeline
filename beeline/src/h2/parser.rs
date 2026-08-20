@@ -39,7 +39,7 @@ pub struct Parser {
     parse_skb_fn: Option<String>,
     extract_fn: Option<String>,
     matched_fn: Option<String>,
-    get_dt_entry_fn: Option<String>,
+    get_dynamic_table_entry_fn: Option<String>,
 }
 
 xbpf::include_bpf!("h2/parser");
@@ -76,7 +76,7 @@ impl Parser {
             parse_skb_fn: None,
             extract_fn: None,
             matched_fn: None,
-            get_dt_entry_fn: None,
+            get_dynamic_table_entry_fn: None,
         }
     }
 
@@ -141,9 +141,9 @@ impl Parser {
     ///
     /// # Arguments
     ///
-    /// * `get_dt_entry_fn` - The name of the dynamic table entry reader function in the target program
-    pub fn replace_get_dt_entry<S: ToString>(mut self, get_dt_entry_fn: S) -> Parser {
-        self.get_dt_entry_fn = Some(get_dt_entry_fn.to_string());
+    /// * `get_dynamic_table_entry_fn` - The name of the dynamic table entry reader function in the target program
+    pub fn replace_get_dynamic_table_entry<S: ToString>(mut self, get_dynamic_table_entry_fn: S) -> Parser {
+        self.get_dynamic_table_entry_fn = Some(get_dynamic_table_entry_fn.to_string());
         self
     }
 
@@ -263,7 +263,7 @@ impl Parser {
             (&mut open_skel.progs.extract_match, self.extract_fn.clone()),
             (
                 &mut open_skel.progs.get_dt_entry,
-                self.get_dt_entry_fn.clone(),
+                self.get_dynamic_table_entry_fn.clone(),
             ),
         ];
 
@@ -292,7 +292,7 @@ impl Parser {
         if self.extract_fn.is_some() {
             links.push(skel.progs.extract_match.attach()?);
         }
-        if self.get_dt_entry_fn.is_some() {
+        if self.get_dynamic_table_entry_fn.is_some() {
             links.push(skel.progs.get_dt_entry.attach()?);
         }
 

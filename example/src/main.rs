@@ -9,7 +9,7 @@
 use axum::http::StatusCode;
 use clap::Parser;
 use example::{h2serve, listener::BeelineListener};
-use fastpath::{OpenObject, Server};
+use fastpath::Server;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tower_http::{
@@ -18,6 +18,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use xbpf::OpenObject;
 
 mod fastpath;
 

@@ -57,16 +57,12 @@ struct ip4_conn {
 // A single captured header field. If `in_msg` is set, `idx` is the offset of
 // the field in the parsed message and `len` its length. Otherwise the field was
 // not spelled out on the wire and `idx` is the HPACK index it has to be read
-// from the static or the dynamic table with.
+// from the static or the dynamic table with. `huff` says whether the bytes are
+// Huffman coded, which HPACK leaves to the sender.
 struct hdr_match {
     u16 idx;
     u16 len;
     bool in_msg;
-
-    // Whether the bytes the match points at are Huffman coded. HPACK lets a
-    // peer send either form and says which with the top bit of a string's
-    // length prefix, so this cannot be assumed: `accept: */*`, for one, is
-    // shorter spelled out and curl sends it that way.
     bool huff;
 };
 
@@ -91,16 +87,10 @@ struct h2_frame {
     u8 type;
     u8 flags;
 
-    // The number of entries in the dynamic table of the connection this frame
-    // belongs to, before and after decoding it. A target program that answers
-    // some requests without forwarding them to user space (e.g. beeline's
-    // example fast path) can compare `dt_count_before` against what it last
-    // handed to user space to see how far the two tables have drifted apart,
-    // and take `dt_count` as the state user space reaches once it has decoded
-    // this frame itself.
+    // The entries in the connection's dynamic table, before and after decoding
+    // this frame.
     u32 dt_count_before;
     u32 dt_count;
-
 };
 
 // The number of bytes of a name or a value that are kept in a dynamic table

@@ -680,8 +680,6 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
                         .idx = k,
                         .len = HEADER_FIELD_MASK,
                         .in_msg = false,
-                        // the entry carries its own encoding, which
-                        // `_extract_match` reads back off it
                         .huff = false,
                     };
                 }
@@ -772,11 +770,8 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struc
     u16 s = s_any;
     struct msg_ctx ctx = _new_msg_ctx(msg);
 
-    // the entry count is reported on either side of the decode, so that a
-    // caller which answers requests itself can tell both how far user space
-    // already lags behind and where it ends up once it decodes this frame.
-    // `_parse_*_from` only ever updates this entry, never deletes it, so the
-    // pointer stays good across the call.
+    // the entry is only ever updated below, never deleted, so the pointer
+    // stays good across the parse
     struct dynamic_table_info *dt_info = _get_dynamic_table(&ctx.conn);
     frame->dt_count_before = dt_info ? dt_info->count : 0;
 
@@ -869,14 +864,9 @@ int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct pa
     return res;
 }
 
-// Reads the `idx`th entry of `conn`'s dynamic table into `out`, the same way
-// `extract_match` resolves an index a peer referenced (see `_get_table_entry`
-// for how `idx` is counted). Used by a target program that wants to replay
-// entries it has already seen onto another connection, e.g. beeline's example
-// fast path handing dynamic table changes off to user space.
-//
-// Returns 0 on success, -1 if `conn` has no dynamic table yet or `idx` names
-// no live entry.
+// Reads the `idx`th entry of `conn`'s dynamic table into `out`, `idx` counted
+// as `_get_table_entry` counts it. Returns 0 on success, -1 if there is no
+// such entry.
 SEC("freplace")
 int get_dt_entry(const struct ip4_conn *conn __arg_nonnull, u32 idx, struct header_field *out __arg_nonnull) {
     struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, conn);

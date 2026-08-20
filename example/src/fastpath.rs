@@ -10,7 +10,6 @@ use std::{
     io::{Error, ErrorKind},
     mem::MaybeUninit,
     net::{SocketAddr, ToSocketAddrs},
-    ops::{Deref, DerefMut},
     os::{
         fd::{AsFd, AsRawFd, IntoRawFd},
         unix::fs::OpenOptionsExt,
@@ -244,7 +243,7 @@ impl<'obj> Server<'obj> {
             .capture_hdr(&http::header::CONTENT_LENGTH)?
             .replace_parse_msg("parse_h2")
             .replace_extract("extract_h2_match")
-            .replace_get_dt_entry("get_dt_entry")
+            .replace_get_dynamic_table_entry("get_dt_entry")
             .attach(prog_fd)?;
 
         let cgroup_fd = std::fs::OpenOptions::new()
@@ -266,31 +265,3 @@ impl<'obj> Server<'obj> {
         })
     }
 }
-
-pub struct OpenObject {
-    inner: MaybeUninit<libbpf_rs::OpenObject>,
-}
-
-impl OpenObject {
-    pub fn new() -> Self {
-        Self {
-            inner: MaybeUninit::uninit(),
-        }
-    }
-}
-
-impl Deref for OpenObject {
-    type Target = MaybeUninit<libbpf_rs::OpenObject>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl DerefMut for OpenObject {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
-
-unsafe impl Send for OpenObject {}
