@@ -10,6 +10,7 @@ authors = [
 repository = "https://github.com/lbrndnr/beeper"
 readme = "README.md"
 keywords = ["ebpf", "bpf", "libbpf", "l7", "http"]
+description = "Application-Layer Parsing in eBPF"
 
 [patch.crates-io]
 h2 = { git = "https://github.com/lbrndnr/h2" }
