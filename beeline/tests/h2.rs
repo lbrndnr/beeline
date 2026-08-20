@@ -590,26 +590,44 @@ async fn ignore_frame_that_ends_before_it_claims_to() {
 
     let mut client = RawClient::connect(addr).await;
 
-    // a HEADERS frame whose header claims a hundred bytes that were never sent
+    // a request the parser does get through first, so that there is something
+    // for a malformed frame to damage: a capture and an entry in the table
+    let accept_val = HeaderValue::from_static("*/*");
+    client
+        .request(raw_request_block(
+            &addr.to_string(),
+            &[(Some(19), "accept", "*/*")],
+        ))
+        .await;
+
+    let before = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    assert_eq!(before.count, 1);
+
+    // and now a HEADERS frame whose header claims a hundred bytes that were
+    // never sent
     let block = raw_request_block(&addr.to_string(), &[(Some(19), "accept", "*/*")]);
-    let mut truncated = frame(0x01, 0x05, 1, &block);
+    let mut truncated = frame(0x01, 0x05, 3, &block);
     truncated[0] = 0;
     truncated[1] = 0;
     truncated[2] = 100;
 
     client.send_raw(&truncated).await;
 
+    // the parser gives up on a frame it cannot see the end of, leaving what it
+    // had captured before it alone rather than half overwriting it
     assert_eq!(
-        prog.get_match(0).expect("get_match"),
-        None,
-        "a frame that was never fully sent was parsed anyway"
+        prog.get_match(0).expect("get_match").as_deref(),
+        Some(accept_val.as_bytes()),
+        "a frame that was never fully sent changed what was captured"
     );
 
-    let info = h2
+    let after = h2
         .dynamic_table_info(client.local_addr, client.remote_addr)
         .expect("dynamic_table_info");
-    assert_eq!(info.count, 0);
-    assert_eq!(info.size, 0);
+    assert_eq!(after.count, before.count);
+    assert_eq!(after.size, before.size);
 }
 
 #[tokio::test]
