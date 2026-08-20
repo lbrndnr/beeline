@@ -39,6 +39,7 @@ pub struct Parser {
     parse_skb_fn: Option<String>,
     extract_fn: Option<String>,
     matched_fn: Option<String>,
+    get_dynamic_table_entry_fn: Option<String>,
 }
 
 xbpf::include_bpf!("h2/parser");
@@ -75,6 +76,7 @@ impl Parser {
             parse_skb_fn: None,
             extract_fn: None,
             matched_fn: None,
+            get_dynamic_table_entry_fn: None,
         }
     }
 
@@ -133,6 +135,18 @@ impl Parser {
         self
     }
 
+    /// Specifies the function template in the target program to be replaced with a reader of the
+    /// connection's dynamic table (`BEELINE_H2_GET_DT_ENTRY`). The function will not be replaced
+    /// until `attach` is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `get_dynamic_table_entry_fn` - The name of the dynamic table entry reader function in the target program
+    pub fn replace_get_dynamic_table_entry<S: ToString>(mut self, get_dynamic_table_entry_fn: S) -> Parser {
+        self.get_dynamic_table_entry_fn = Some(get_dynamic_table_entry_fn.to_string());
+        self
+    }
+
     /// Configures the parser to capture the value of a header field.
     ///
     /// The field name is matched in its Huffman encoded form, which is how
@@ -187,6 +201,9 @@ impl Parser {
                 key_len,
                 val: hf_val.try_into().unwrap(),
                 val_len,
+                // the static table is written out Huffman coded above
+                key_huff: 1,
+                val_huff: 1,
             };
 
             let idx = unsafe { idx.as_bytes() };
@@ -244,6 +261,10 @@ impl Parser {
             (&mut open_skel.progs.parse_buf, self.parse_buf_fn.clone()),
             (&mut open_skel.progs.matched, self.matched_fn.clone()),
             (&mut open_skel.progs.extract_match, self.extract_fn.clone()),
+            (
+                &mut open_skel.progs.get_dt_entry,
+                self.get_dynamic_table_entry_fn.clone(),
+            ),
         ];
 
         for (prog, func) in progs {
@@ -270,6 +291,9 @@ impl Parser {
         }
         if self.extract_fn.is_some() {
             links.push(skel.progs.extract_match.attach()?);
+        }
+        if self.get_dynamic_table_entry_fn.is_some() {
+            links.push(skel.progs.get_dt_entry.attach()?);
         }
 
         let id = skel.maps.static_table.info()?.info.id;

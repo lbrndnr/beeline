@@ -50,7 +50,25 @@ curl -vv http://127.0.0.1:8080/index.html
 
 In the logs of the server, you should find a line that indicates that the request was served directly from the kernel:
 ```
-Served request to /index.html
+Served request
+```
+
+To benchmark the server, run the following:
+```bash
+# server accelerated with beeline
+RUST_LOG= cargo run -r --bin example
+# baseline: server without the fastpath
+RUST_LOG= cargo run -r --bin example -- --no-fastpath
+```
+
+In a new window, you can now run the load test:
+```bash
+cargo install oha
+
+# to test http1 performance
+oha -c 100 -q 1000 -z 30s --latency-correction --urls-from-file example/load.txt
+
+oha -c 100 -q 1000 -z 30s --http2 --latency-correction --urls-from-file example/load.txt
 ```
 
 ## Citation

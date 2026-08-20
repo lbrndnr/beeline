@@ -10,7 +10,6 @@ use std::{
     io::{Error, ErrorKind},
     mem::MaybeUninit,
     net::{SocketAddr, ToSocketAddrs},
-    ops::{Deref, DerefMut},
     os::{
         fd::{AsFd, AsRawFd, IntoRawFd},
         unix::fs::OpenOptionsExt,
@@ -19,20 +18,23 @@ use std::{
 };
 use tracing::{Level, debug, info, warn};
 use types::*;
-use xbpf::{
-    OpenObject,
-    libbpf::{
-        self as libbpf_rs, Link, MapCore, MapFlags, MapHandle, MapType,
-        skel::{OpenSkel, Skel, SkelBuilder},
-    },
+use xbpf::libbpf::{
+    self as libbpf_rs, Link, MapCore, MapFlags, MapHandle, MapType,
+    skel::{OpenSkel, Skel, SkelBuilder},
 };
 
-xbpf::include_bpf!("server");
+xbpf::include_bpf!("fast_path");
 
-// Must stay in sync with the corresponding `#define`s in server.bpf.c.
+fn huffman_encode(val: &str) -> Vec<u8> {
+    let mut res = Vec::new();
+    huffman::encode(val.as_bytes(), &mut res).unwrap();
+    res
+}
+
+// Must stay in sync with the corresponding `#define`s in fastpath.bpf.c.
 const MAX_ROUTES: usize = 16;
 const MAX_ROUTE_PATH: usize = 64;
-const MAX_ROUTE_BODY: usize = 4096;
+const MAX_ROUTE_BODY: usize = 32768;
 
 /// The fast path of the example server.
 ///
@@ -40,18 +42,20 @@ const MAX_ROUTE_BODY: usize = 4096;
 /// parser and answers the ones whose path it has a pre-rendered response for
 /// straight from the kernel. Everything else is passed on to the user space
 /// server. The fast path stays attached until this value is dropped.
-pub struct Server<'obj> {
+pub struct FastPath<'obj> {
     #[allow(dead_code)]
-    skel: ServerSkel<'obj>,
+    skel: FastPathSkel<'obj>,
     #[allow(dead_code)]
     sockops: Link,
     #[allow(dead_code)]
     h1: h1::AttachedParser,
+    #[allow(dead_code)]
+    h2: h2::AttachedParser,
 }
 
-unsafe impl<'obj> Send for Server<'obj> {}
+unsafe impl<'obj> Send for FastPath<'obj> {}
 
-unsafe impl<'obj> Sync for Server<'obj> {}
+unsafe impl<'obj> Sync for FastPath<'obj> {}
 
 /// Returns the value of the `Content-Type` header to serve `file` with, based
 /// on its extension.
@@ -82,7 +86,51 @@ fn render_response(file: &Path) -> Result<Vec<u8>> {
     Ok(resp)
 }
 
-impl<'obj> Server<'obj> {
+/// Encodes a header as an HPACK literal without indexing, taking the name from
+/// the static table. Not indexing keeps the client's dynamic table untouched,
+/// which it has to be: the server never sees this response, so its own encoder
+/// would not know about the entry.
+fn hpack_literal(name_idx: u8, value: &str) -> Vec<u8> {
+    let mut out = vec![0x0F, name_idx - 15];
+    out.push(value.len() as u8);
+    out.extend_from_slice(value.as_bytes());
+    out
+}
+
+fn h2_frame(kind: u8, flags: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(9 + payload.len());
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes()[1..]);
+    frame.push(kind);
+    frame.push(flags);
+    // the stream id is only known once a request comes in, the fast path
+    // patches it into the frame header before serving
+    frame.extend_from_slice(&0u32.to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
+/// Renders the same response as [`render_response`] as an HTTP/2 HEADERS frame
+/// followed by a DATA frame. Both carry a zeroed stream id; the returned
+/// offsets point at the two spots the fast path has to patch it into.
+fn render_h2_response(file: &Path) -> Result<(Vec<u8>, [u32; 2])> {
+    let body = std::fs::read(file)
+        .with_context(|| format!("failed to read fastpath asset {}", file.display()))?;
+
+    // :status: 200 is a static table entry of its own, so it can be referenced
+    // as an indexed field
+    let mut hdrs = vec![0x88];
+    hdrs.extend_from_slice(&hpack_literal(28, &body.len().to_string()));
+    hdrs.extend_from_slice(&hpack_literal(31, content_type(file)));
+
+    let mut resp = h2_frame(0x01, 0x04, &hdrs); // HEADERS, END_HEADERS
+    let data_off = resp.len();
+    resp.extend_from_slice(&h2_frame(0x00, 0x01, &body)); // DATA, END_STREAM
+
+    // the stream id sits at offset 5 of a frame header
+    Ok((resp, [5, data_off as u32 + 5]))
+}
+
+impl<'obj> FastPath<'obj> {
     /// Attaches the server's fast path.
     ///
     /// `routes` maps request paths (e.g. `/index.html`) to files on disk. The
@@ -102,19 +150,29 @@ impl<'obj> Server<'obj> {
             );
         }
 
+        // a route is reachable under its plain text path as well as under the
+        // huffman encoded one h2 puts on the wire
         let mut prepared = Vec::with_capacity(routes.len());
         for (path, file) in routes.iter() {
-            let key = path.as_bytes().to_vec();
-            if key.len() > MAX_ROUTE_PATH {
+            let keys = [path.as_bytes().to_vec(), huffman_encode(path)];
+            if keys.iter().any(|key| key.len() > MAX_ROUTE_PATH) {
                 bail!("fastpath route path `{path}` is longer than {MAX_ROUTE_PATH} bytes");
             }
 
             let body = render_response(file)?;
-            if body.len() > MAX_ROUTE_BODY {
-                bail!("fastpath response for `{path}` is longer than {MAX_ROUTE_BODY} bytes");
+            let (h2_body, h2_sid_offs) = render_h2_response(file)?;
+
+            // a response too large to pre-render is left to the server rather
+            // than refused: a path the fast path does not know is one it passes
+            // on, which is exactly what should happen to it
+            let len = body.len().max(h2_body.len());
+            if len > MAX_ROUTE_BODY {
+                info!("Not serving `{path}` from the fast path, {len}B exceeds {MAX_ROUTE_BODY}B");
+                continue;
             }
 
-            prepared.push((key, body));
+            debug!("Serving `{path}` from the fast path");
+            prepared.push((keys, body, h2_body, h2_sid_offs));
         }
 
         let address = address
@@ -122,7 +180,7 @@ impl<'obj> Server<'obj> {
             .next()
             .expect("Failed to parse address");
 
-        let skel_builder = ServerSkelBuilder::default();
+        let skel_builder = FastPathSkelBuilder::default();
         let mut open_skel = skel_builder.open(open_obj)?;
         if tracing::event_enabled!(Level::TRACE) {
             open_skel.progs.msg_verdict.set_log_level(1);
@@ -140,10 +198,13 @@ impl<'obj> Server<'obj> {
         open_skel.maps.rodata_data.as_mut().unwrap().port = address.port() as u32;
 
         let bss = open_skel.maps.bss_data.as_mut().unwrap();
-        for (i, (_, body)) in prepared.iter().enumerate() {
+        for (i, (_, body, h2_body, h2_sid_offs)) in prepared.iter().enumerate() {
             let route = &mut bss.routes[i];
             route.body[..body.len()].copy_from_slice(body);
             route.body_len = body.len() as u32;
+            route.h2_body[..h2_body.len()].copy_from_slice(h2_body);
+            route.h2_body_len = h2_body.len() as u32;
+            route.h2_sid_offs = *h2_sid_offs;
         }
 
         let skel = open_skel.load()?;
@@ -154,23 +215,35 @@ impl<'obj> Server<'obj> {
 
         // the route index is a hash map, so it can only be populated once the
         // program is loaded and the map created
-        for (i, (key, ..)) in prepared.iter().enumerate() {
-            let mut padded = [0; MAX_ROUTE_PATH];
-            padded[..key.len()].copy_from_slice(key);
+        for (i, (keys, ..)) in prepared.iter().enumerate() {
+            for key in keys {
+                let mut padded = [0; MAX_ROUTE_PATH];
+                padded[..key.len()].copy_from_slice(key);
 
-            skel.maps
-                .route_idx
-                .update(&padded, &[i as u8], MapFlags::ANY)
-                .with_context(|| format!("failed to index fastpath route {i}"))?;
+                skel.maps
+                    .route_idx
+                    .update(&padded, &[i as u8], MapFlags::ANY)
+                    .with_context(|| format!("failed to index fastpath route {i}"))?;
+            }
         }
         let sock_map_fd = skel.maps.sock_map.as_fd().as_raw_fd();
         let prog_fd = skel.progs.msg_verdict.as_fd().as_raw_fd();
 
         let h1 = h1::Parser::new()
+            .match_h2_preface()
             .capture_hdr(&beeline::header::PATH)
             .capture_hdr(&http::header::CONTENT_LENGTH)
             .replace_parse_msg("parse_h1")
             .replace_extract("extract_h1_match")
+            .replace_matched("matched_h1")
+            .attach(prog_fd)?;
+
+        let h2 = h2::Parser::new()
+            .capture_hdr(&beeline::header::PATH)?
+            .capture_hdr(&http::header::CONTENT_LENGTH)?
+            .replace_parse_msg("parse_h2")
+            .replace_extract("extract_h2_match")
+            .replace_get_dynamic_table_entry("get_dt_entry")
             .attach(prog_fd)?;
 
         let cgroup_fd = std::fs::OpenOptions::new()
@@ -184,6 +257,11 @@ impl<'obj> Server<'obj> {
 
         debug!("Server fast path attached");
 
-        Ok(Self { sockops, skel, h1 })
+        Ok(Self {
+            sockops,
+            skel,
+            h1,
+            h2,
+        })
     }
 }

@@ -10,3 +10,6 @@ authors = [
 repository = "https://github.com/lbrndnr/beeline"
 readme = "README.md"
 keywords = ["ebpf", "bpf", "libbpf", "l7"]
+
+[patch.crates-io]
+h2 = { git = "https://github.com/lbrndnr/h2" }

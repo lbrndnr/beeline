@@ -1,11 +1,14 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use ::h2::{RecvStream, client};
 use beeline::{h1, h2};
 use bytes::Bytes;
 use httlib_huffman as huffman;
 use http::{HeaderName, HeaderValue, Request, Response, header};
-use tokio::net::TcpStream;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 use utils::{
     server,
     test::{Direction, TestProgram},
@@ -103,6 +106,132 @@ impl Client {
         assert!(response.status().is_success());
 
         response
+    }
+}
+
+/// The HTTP/2 connection preface, see section 3.5 of RFC 7540.
+const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+/// The first index of the dynamic table, the static one taking up everything
+/// below it.
+const FIRST_DYNAMIC_INDEX: u8 = 62;
+
+/// Renders an HTTP/2 frame.
+fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
+    let mut f = Vec::new();
+    f.extend_from_slice(&(payload.len() as u32).to_be_bytes()[1..]);
+    f.push(kind);
+    f.push(flags);
+    f.extend_from_slice(&stream.to_be_bytes());
+    f.extend_from_slice(payload);
+    f
+}
+
+/// Renders an HPACK string, spelled out rather than Huffman coded. Only short
+/// strings are handled, which is all these tests send.
+fn raw_str(s: &str) -> Vec<u8> {
+    assert!(s.len() < 127, "raw_str only encodes a one byte length");
+
+    let mut out = vec![s.len() as u8];
+    out.extend_from_slice(s.as_bytes());
+
+    out
+}
+
+/// A client that writes its own HPACK, which is the only way to send a header
+/// that is not Huffman coded: `h2`'s encoder always codes. Real clients do send
+/// them, curl among them.
+struct RawClient {
+    stream: TcpStream,
+    local_addr: SocketAddr,
+    remote_addr: SocketAddr,
+    next_stream_id: u32,
+}
+
+impl RawClient {
+    /// Connects and completes the handshake.
+    async fn connect(addr: SocketAddr) -> Self {
+        let mut stream = TcpStream::connect(addr).await.expect("connect");
+        let local_addr = stream.local_addr().expect("local_addr");
+        let remote_addr = stream.peer_addr().expect("peer_addr");
+
+        stream.write_all(PREFACE).await.expect("preface");
+        // empty, so every parameter keeps its default
+        stream
+            .write_all(&frame(0x04, 0, 0, &[]))
+            .await
+            .expect("settings");
+        stream.flush().await.expect("flush");
+
+        let mut client = Self {
+            stream,
+            local_addr,
+            remote_addr,
+            next_stream_id: 1,
+        };
+
+        client.read_frame(0x04).await;
+        client
+            .stream
+            .write_all(&frame(0x04, 0x01, 0, &[]))
+            .await
+            .expect("settings ack");
+        client.stream.flush().await.expect("flush");
+
+        client
+    }
+
+    /// Reads frames until one of type `kind` arrives, and returns its payload.
+    async fn read_frame(&mut self, kind: u8) -> Vec<u8> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+
+        loop {
+            let mut head = [0; 9];
+            tokio::time::timeout_at(deadline, self.stream.read_exact(&mut head))
+                .await
+                .expect("timed out waiting for a frame")
+                .expect("read frame header");
+
+            let len = u32::from_be_bytes([0, head[0], head[1], head[2]]) as usize;
+            let mut payload = vec![0; len];
+            tokio::time::timeout_at(deadline, self.stream.read_exact(&mut payload))
+                .await
+                .expect("timed out reading a frame")
+                .expect("read frame payload");
+
+            if head[3] == kind {
+                return payload;
+            }
+        }
+    }
+
+    /// Sends a request carrying `block` and waits for its response, so that the
+    /// parser has seen it by the time this returns.
+    async fn request(&mut self, block: Vec<u8>) {
+        let id = self.next_stream_id;
+        self.next_stream_id += 2;
+
+        // END_STREAM | END_HEADERS
+        self.stream
+            .write_all(&frame(0x01, 0x05, id, &block))
+            .await
+            .expect("request");
+        self.stream.flush().await.expect("flush");
+
+        self.read_frame(0x01).await;
+    }
+
+    /// Writes `bytes` as they are, without expecting an answer.
+    ///
+    /// A malformed frame is answered with a GOAWAY at best, so there is nothing
+    /// to wait for, and nothing is read back: a read of whatever happens to
+    /// have arrived can stop in the middle of a frame and leave the stream out
+    /// of step for the next one. The parser runs on the way out of `write_all`,
+    /// which is what makes that safe -- an `sk_msg` program runs as part of the
+    /// send, so it has seen these bytes by the time this returns.
+    async fn send_raw(&mut self, bytes: &[u8]) {
+        self.stream.write_all(bytes).await.expect("write");
+        self.stream.flush().await.expect("flush");
     }
 }
 
@@ -329,6 +458,280 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
         .await;
     assert_match_eq(&prog, 0, Some(&user_agent_val));
     assert_match_eq(&prog, 1, Some(&lang_val));
+}
+
+/// Builds the header block of a request whose fields are spelled out rather
+/// than Huffman coded.
+///
+/// The only entries it adds to the dynamic table are the ones in `indexed`,
+/// whose name is either taken from the static table or, for `None`, spelled
+/// out.
+fn raw_request_block(authority: &str, indexed: &[(Option<u8>, &str, &str)]) -> Vec<u8> {
+    // :method: GET, :scheme: http and :path: /
+    let mut block = vec![0x82, 0x86, 0x84];
+
+    // :authority, without indexing so that it stays out of the dynamic table
+    block.push(0x01);
+    block.extend_from_slice(&raw_str(authority));
+
+    for (name_idx, name, value) in indexed {
+        match name_idx {
+            Some(idx) => block.push(0x40 | idx),
+            None => {
+                block.push(0x40);
+                block.extend_from_slice(&raw_str(name));
+            }
+        }
+        block.extend_from_slice(&raw_str(value));
+    }
+
+    block
+}
+
+#[tokio::test]
+async fn parse_header_field_incremental_indexing_not_huffman_encoded() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let h2 = attach_h2_parser(prog.prog_fd(), &[header::ACCEPT]);
+
+    let accept_val = HeaderValue::from_static("*/*");
+    let test_header_val = HeaderValue::from_static("in-the-hive");
+
+    // the first spells its name out too, which the DFA cannot match, as it is
+    // built from Huffman coded names. both are still added to the table.
+    let mut client = RawClient::connect(addr).await;
+    client
+        .request(raw_request_block(
+            &addr.to_string(),
+            &[
+                (None, TEST_HEADER.as_str(), "in-the-hive"),
+                (Some(19), "accept", "*/*"),
+            ],
+        ))
+        .await;
+
+    assert_eq!(
+        prog.get_match(0).expect("get_match").as_deref(),
+        Some(accept_val.as_bytes()),
+        "a value that was not Huffman coded did not come back as it was sent"
+    );
+
+    // an entry is sized by its name and value as text, whichever form they were
+    // sent in
+    let expected_dt = &[
+        (TEST_HEADER, test_header_val.clone()),
+        (header::ACCEPT, accept_val.clone()),
+    ];
+    let info = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+
+    assert_eq!(info.count, expected_dt.len() as u32);
+    assert_eq!(info.size, dynamic_table_size_for_headers(expected_dt));
+    assert_eq!(info.max_size, 4096);
+}
+
+#[tokio::test]
+async fn resolve_index_of_entry_that_was_not_huffman_encoded() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[header::ACCEPT]);
+
+    let accept_val = HeaderValue::from_static("*/*");
+
+    let mut client = RawClient::connect(addr).await;
+    client
+        .request(raw_request_block(
+            &addr.to_string(),
+            &[(Some(19), "accept", "*/*")],
+        ))
+        .await;
+    assert_eq!(
+        prog.get_match(0).expect("get_match").as_deref(),
+        Some(accept_val.as_bytes())
+    );
+
+    // the entry is now the most recent one, so a second request can refer to it
+    // by index alone
+    let mut block = vec![0x82, 0x86, 0x84];
+    block.push(0x01);
+    block.extend_from_slice(&raw_str(&addr.to_string()));
+    block.push(0x80 | FIRST_DYNAMIC_INDEX);
+
+    client.request(block).await;
+
+    assert_eq!(
+        prog.get_match(0).expect("get_match").as_deref(),
+        Some(accept_val.as_bytes()),
+        "an entry that was not Huffman coded did not resolve from the table"
+    );
+}
+
+#[tokio::test]
+async fn ignore_frame_that_ends_before_it_claims_to() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let h2 = attach_h2_parser(prog.prog_fd(), &[header::ACCEPT]);
+
+    let mut client = RawClient::connect(addr).await;
+
+    // a request the parser does get through first, so that there is something
+    // for a malformed frame to damage: a capture and an entry in the table
+    let accept_val = HeaderValue::from_static("*/*");
+    client
+        .request(raw_request_block(
+            &addr.to_string(),
+            &[(Some(19), "accept", "*/*")],
+        ))
+        .await;
+
+    let before = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    assert_eq!(before.count, 1);
+
+    // and now a HEADERS frame whose header claims a hundred bytes that were
+    // never sent
+    let block = raw_request_block(&addr.to_string(), &[(Some(19), "accept", "*/*")]);
+    let mut truncated = frame(0x01, 0x05, 3, &block);
+    truncated[0] = 0;
+    truncated[1] = 0;
+    truncated[2] = 100;
+
+    client.send_raw(&truncated).await;
+
+    // the parser gives up on a frame it cannot see the end of, leaving what it
+    // had captured before it alone rather than half overwriting it
+    assert_eq!(
+        prog.get_match(0).expect("get_match").as_deref(),
+        Some(accept_val.as_bytes()),
+        "a frame that was never fully sent changed what was captured"
+    );
+
+    let after = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    assert_eq!(after.count, before.count);
+    assert_eq!(after.size, before.size);
+}
+
+#[tokio::test]
+async fn ignore_header_field_indexed_past_the_end_of_the_table() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let h2 = attach_h2_parser(prog.prog_fd(), &[header::ACCEPT]);
+
+    let mut client = RawClient::connect(addr).await;
+
+    // the dynamic table is empty, so nothing has that index yet
+    let mut block = vec![0x82, 0x86, 0x84];
+    block.push(0x01);
+    block.extend_from_slice(&raw_str(&addr.to_string()));
+    block.push(0x80 | FIRST_DYNAMIC_INDEX);
+
+    client.send_raw(&frame(0x01, 0x05, 1, &block)).await;
+
+    assert_eq!(
+        prog.get_match(0).expect("get_match"),
+        None,
+        "an index no entry sits at resolved to something"
+    );
+
+    let info = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    assert_eq!(info.count, 0);
+}
+
+#[tokio::test]
+async fn ignore_header_field_whose_value_runs_past_the_frame() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let h2 = attach_h2_parser(prog.prog_fd(), &[header::ACCEPT]);
+
+    let mut client = RawClient::connect(addr).await;
+
+    // the frame is the length it says it is, but the value inside it claims a
+    // hundred bytes with two left to read
+    let mut block = vec![0x82, 0x86, 0x84];
+    block.push(0x01);
+    block.extend_from_slice(&raw_str(&addr.to_string()));
+    block.push(0x40 | 19);
+    block.push(100);
+    block.extend_from_slice(b"ab");
+
+    client.send_raw(&frame(0x01, 0x05, 1, &block)).await;
+
+    assert_eq!(
+        prog.get_match(0).expect("get_match"),
+        None,
+        "a value reaching past the frame was captured"
+    );
+
+    // and it is no more welcome in the table than it is in a capture
+    let info = h2
+        .dynamic_table_info(client.local_addr, client.remote_addr)
+        .expect("dynamic_table_info");
+    assert_eq!(info.count, 0);
+    assert_eq!(info.size, 0);
+}
+
+#[tokio::test]
+async fn parse_frame_after_an_unknown_one() {
+    let addr = server::launch().await.expect("launch server");
+
+    let mut open_obj = OpenObject::new();
+    let prog =
+        TestProgram::attach(addr, &mut open_obj, Direction::Downstream).expect("attach program");
+
+    let _h1 = attach_preface_parser(prog.prog_fd());
+    let _h2 = attach_h2_parser(prog.prog_fd(), &[header::ACCEPT]);
+
+    let mut client = RawClient::connect(addr).await;
+
+    // an unassigned frame type, which RFC 7540 says a peer has to discard
+    // rather than choke on
+    client.send_raw(&frame(0xFA, 0, 0, b"beeline")).await;
+
+    // the parser has to pick the stream back up on the next frame
+    let accept_val = HeaderValue::from_static("*/*");
+    client
+        .request(raw_request_block(
+            &addr.to_string(),
+            &[(Some(19), "accept", "*/*")],
+        ))
+        .await;
+
+    assert_eq!(
+        prog.get_match(0).expect("get_match").as_deref(),
+        Some(accept_val.as_bytes()),
+        "the parser did not recover from a frame it skipped"
+    );
 }
 
 #[tokio::test]

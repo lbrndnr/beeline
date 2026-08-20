@@ -31,18 +31,11 @@ enum h2_parse_state {
 
 // The number of bytes of a name or a value that are kept in a table entry.
 // Longer fields are truncated, which bounds the copies for the verifier.
-#define HEADER_FIELD_MAXLEN 128
+// `header_field`, which both tables are made of, is declared in beeline.h so
+// that a target program reading dynamic table entries with
+// `BEELINE_H2_GET_DT_ENTRY` agrees on its layout.
+#define HEADER_FIELD_MAXLEN BEELINE_H2_FIELD_MAXLEN
 #define HEADER_FIELD_MASK (HEADER_FIELD_MAXLEN - 1)
-
-// An entry of one of the HPACK tables. Both name and value are stored Huffman
-// encoded, i.e. the way they appear on the wire, so that matching them against
-// the DFA does not require decoding them first.
-struct header_field {
-    u8 key[HEADER_FIELD_MAXLEN];
-    u8 key_len;
-    u8 val[HEADER_FIELD_MAXLEN];
-    u8 val_len;
-};
 
 // The number of entries of the HPACK static table, see appendix A of RFC 7541.
 #define STATIC_TABLE_SIZE 61
@@ -267,11 +260,12 @@ static __always_inline u32 _get_dynamic_table_index(const struct dynamic_table_i
 // itself or, if the peer only referenced the field by index, in the static or
 // the dynamic table. `is_key` selects the name of a table entry over its value.
 // `*out` is left untouched if the match cannot be resolved.
-static __always_inline void _extract_match(const struct msg_ctx *ctx, const struct hdr_match *m, bool is_key, u8 **out, u32 *len) {
+static __always_inline void _extract_match(const struct msg_ctx *ctx, const struct hdr_match *m, bool is_key, u8 **out, u32 *len, bool *huff) {
     if (m->in_msg) {
         if (ctx->data + m->idx + m->len > ctx->data_end) return;
         *out = ctx->data + m->idx;
         *len = m->len;
+        if (huff) *huff = m->huff;
         return;
     }
 
@@ -295,9 +289,11 @@ static __always_inline void _extract_match(const struct msg_ctx *ctx, const stru
     if (is_key) {
         *out = entry->field.key;
         *len = entry->field.key_len;
+        if (huff) *huff = (entry->field.key_huff != 0);
     } else {
         *out = entry->field.val;
         *len = entry->field.val_len;
+        if (huff) *huff = (entry->field.val_huff != 0);
     }
 }
 
@@ -376,7 +372,7 @@ static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnu
 // A caller that finds `j` back at 0 with `ps` at an integer state has just read
 // the last byte of that integer, and one that finds `ps` at a string state has
 // just read a byte of the string.
-static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, u32 *m, u32 *k, u8 *j) {
+static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, u32 *m, u32 *k, u8 *j, bool *huff) {
     if (*j > 0) {
         if (PS_IS_STR(*ps)) {
             *j -= 1;
@@ -397,6 +393,7 @@ static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, 
         u8 mask = (1 << *n) - 1;
         *k = c & mask;
         *j = (*k == mask);
+        *huff = (c & 0x80) != 0;
     }
 }
 
@@ -505,12 +502,14 @@ __noinline __weak u32 _try_evict_dynamic_table_entries(const struct msg_ctx *ctx
 __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_nonnull, struct dynamic_table_info *dt_info __arg_nonnull, const struct hdr_match *key __arg_nonnull, const struct hdr_match *val __arg_nonnull) {
     u8 *key_ptr = NULL;
     u32 key_len = 0;
-    _extract_match(ctx, key, true, &key_ptr, &key_len);
+    bool key_huff = false;
+    _extract_match(ctx, key, true, &key_ptr, &key_len, &key_huff);
     if (!key_ptr) return -1;
 
     u8 *val_ptr = NULL;
     u32 val_len = 0;
-    _extract_match(ctx, val, false, &val_ptr, &val_len);
+    bool val_huff = false;
+    _extract_match(ctx, val, false, &val_ptr, &val_len, &val_huff);
     if (!val_ptr) return -1;
 
     key_len = key_len & HEADER_FIELD_MASK;
@@ -530,8 +529,11 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
     ret = bpf_probe_read_kernel(dt_val->field.val, val_len, val_ptr);
     dt_val->field.val_len = !ret * val_len;
 
-    u16 key_len_decoded = hpack_huffman_decoded_len(dt_val->field.key, key_len);
-    u16 val_len_decoded = hpack_huffman_decoded_len(dt_val->field.val, val_len);
+    dt_val->field.key_huff = key_huff;
+    dt_val->field.val_huff = val_huff;
+
+    u16 key_len_decoded = key_huff ? hpack_huffman_decoded_len(dt_val->field.key, key_len) : key_len;
+    u16 val_len_decoded = val_huff ? hpack_huffman_decoded_len(dt_val->field.val, val_len) : val_len;
     dt_val->size = key_len_decoded + val_len_decoded + 32;
 
     _try_evict_dynamic_table_entries(ctx, dt_info, dt_val->size);
@@ -636,11 +638,13 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
     u8 j = 0;
     s8 cid = -1;
     u8 add_to_dt = 0;
+    bool huff = false;
     enum h2_parse_state ps = H2_IDX;
     struct hdr_match key = {
         .idx = 0,
         .len = 0,
         .in_msg = true,
+        .huff = false,
     };
 
     bpf_for(i, start, len+1) {
@@ -653,7 +657,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             continue;
         }
 
-        _parse_hpack(c, &ps, &n, &m, &k, &j);
+        _parse_hpack(c, &ps, &n, &m, &k, &j, &huff);
         bpf_trace("hdr: hpack idx: %d, ps: %d, n: %d, k: %d, j: %d", i, ps, n, k, j);
 
         if (j != 0 && !PS_IS_STR(ps)) continue;
@@ -676,6 +680,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
                         .idx = k,
                         .len = HEADER_FIELD_MASK,
                         .in_msg = false,
+                        .huff = false,
                     };
                 }
             }
@@ -686,6 +691,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
             key.idx = i + 1;
             key.len = k;
             key.in_msg = true;
+            key.huff = huff;
         }
         else if (ps == H2_KEY) {
             u16 a = 0;
@@ -700,6 +706,7 @@ static __always_inline int _parse_hdr_from(const struct msg_ctx *ctx, u16 start,
                 .idx = i + 1,
                 .len = k,
                 .in_msg = true,
+                .huff = huff,
             };
 
             if (add_to_dt) {
@@ -763,12 +770,19 @@ int parse_msg(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull, struc
     u16 s = s_any;
     struct msg_ctx ctx = _new_msg_ctx(msg);
 
+    // the entry is only ever updated below, never deleted, so the pointer
+    // stays good across the parse
+    struct dynamic_table_info *dt_info = _get_dynamic_table(&ctx.conn);
+    frame->dt_count_before = dt_info ? dt_info->count : 0;
+
     int res;
     if (is_hdr) {
         res = _parse_hdr_from(&ctx, hdr_len, len+hdr_len, &s, pres, NULL);
     } else {
         res = _parse_stg_from(&ctx, hdr_len, len+hdr_len, &s, pres, NULL);
     }
+
+    frame->dt_count = dt_info ? dt_info->count : 0;
 
     if (len > hdr_len + res) return -1;
 
@@ -850,6 +864,23 @@ int parse_buf(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn, struct pa
     return res;
 }
 
+// Reads the `idx`th entry of `conn`'s dynamic table into `out`, `idx` counted
+// as `_get_table_entry` counts it. Returns 0 on success, -1 if there is no
+// such entry.
+SEC("freplace")
+int get_dt_entry(const struct ip4_conn *conn __arg_nonnull, u32 idx, struct header_field *out __arg_nonnull) {
+    struct dynamic_table_info *dt_info = bpf_map_lookup_elem(&dynamic_table_info, conn);
+    if (dt_info == NULL) return -1;
+
+    struct header_field *hf = NULL;
+    _get_table_entry(conn, dt_info, idx, &hf);
+    if (hf == NULL) return -1;
+
+    __builtin_memcpy(out, hf, sizeof(*out));
+
+    return 0;
+}
+
 // Returns whether the parser captured a value for the match `idx`.
 SEC("freplace")
 bool matched(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull, u8 idx) {
@@ -876,7 +907,7 @@ int extract_match(const struct sk_msg_md *msg, const struct parse_res *pres __ar
     struct msg_ctx ctx = _new_msg_ctx(msg);
     u8 *ptr = NULL;
     u32 len = 0;
-    _extract_match(&ctx, &m, false, &ptr, &len);
+    _extract_match(&ctx, &m, false, &ptr, &len, NULL);
     if (ptr == NULL) return -1;
 
     *str = (struct hdr_str) {
