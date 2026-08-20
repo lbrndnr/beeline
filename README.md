@@ -50,7 +50,7 @@ curl -vv http://127.0.0.1:8080/index.html
 
 In the logs of the server, you should find a line that indicates that the request was served directly from the kernel:
 ```
-Served request to /index.html
+Served request
 ```
 
 ## Citation

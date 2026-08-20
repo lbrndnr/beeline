@@ -5,8 +5,8 @@
 //! files listed in `routes` before they ever reach user space.
 
 use axum::http::StatusCode;
-use fastpath::{OpenObject, Server};
 use example::{h2serve, listener::BeelineListener};
+use fastpath::{OpenObject, Server};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tower_http::{

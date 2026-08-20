@@ -563,14 +563,7 @@ int msg_verdict(struct sk_msg_md *msg) {
 
     if (can_serve) {
         if (try_serve_route(msg, &ikey, &path, sid) == 0) {
-            // the following is a bit wasteful, so we only do it for debugging purposes
-            #if BPF_TRACING_LEVEL >= BPF_TRACING_LEVEL_TRACE
-
-            char head[32] = {};
-            bpf_probe_read_kernel_str(head, (path.len + 1) & 0x1F, path.ptr);
-
-            bpf_debug("Served request to %s", head);
-            #endif
+            bpf_debug("Served request");
 
             // user space knows nothing of this request, and the header block
             // just decoded may well have changed the dynamic table, so the
@@ -581,9 +574,6 @@ int msg_verdict(struct sk_msg_md *msg) {
             }
 
             return SK_PASS;
-        }
-        else {
-            bpf_error("Failed to serve file");
         }
     }
 
