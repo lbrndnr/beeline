@@ -24,10 +24,10 @@ tower-http = { version = "0.7", features = ["fs", "trace", "set-status"] }
 libc = "0.2.189"
 anyhow = "1.0.104"
 as-bytes = "0.2.0"
-xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
+xbpf = "0.0.2"
 
 [build-dependencies]
-xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
+xbpf = { version = "0.0.2", features = ["build"] }
 beeper = { path = "../beeper", features = ["build"] }
 
 [dev-dependencies]

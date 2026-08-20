@@ -1,12 +1,12 @@
 # Beeper: Application-Layer Parsing in eBPF
 
-<!--[![Crates.io][crates-badge]][crates-url]-->
+[![Crates.io][crates-badge]][crates-url]
 [![GPL-v3 licensed][gpl-badge]][gpl-url]
 [![Build Status][actions-badge]][actions-url]
 [![DOI][doi-badge]][doi-url]
 
-<!--[crates-badge]: https://img.shields.io/crates/v/bpf-tracing.svg
-[crates-url]: https://crates.io/crates/bpf-tracing-->
+[crates-badge]: https://img.shields.io/crates/v/beeper.svg
+[crates-url]: https://crates.io/crates/beeper
 [gpl-badge]: https://img.shields.io/badge/License-GPL_v3-blue.svg
 [gpl-url]: LICENSE
 [actions-badge]: https://github.com/lbrndnr/beeper/actions/workflows/ci.yml/badge.svg

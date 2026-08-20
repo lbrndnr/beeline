@@ -23,10 +23,10 @@ httlib-huffman = "0.3.4"
 libc = "0.2.189"
 plain = "0.2.3"
 tracing = "0.1.44"
-xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
+xbpf = "0.0.2"
 
 [build-dependencies]
-xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
+xbpf = { version = "0.0.2", features = ["build"] }
 
 [dev-dependencies]
 reqwest = "0.13.4"

@@ -2396,8 +2396,9 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xbpf"
-version = "0.0.1"
-source = "git+https://github.com/lbrndnr/ebpf.git?branch=map#6d33e7861d58a2ed23f107d1d8c3e7e4b779da9e"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "949de5d58a5cafbb99e59ad4855cb57cf353d7384e334f9fa155667a3a449bf1"
 dependencies = [
  "glob",
  "libbpf-cargo",
