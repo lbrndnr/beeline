@@ -12,7 +12,7 @@
 //! translated into what it expects and its responses are written back onto the
 //! stream.
 
-use crate::listener::{BeepsListener, BeepsStream, Protocol, SyncHandle};
+use crate::listener::{BeeperListener, BeeperStream, Protocol, SyncHandle};
 use axum::{Router, body::Body, extract::Request};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -23,7 +23,7 @@ use tower::ServiceExt;
 use tracing::{debug, error};
 
 /// Serves `app` on `listener` until the process is stopped.
-pub async fn serve(listener: BeepsListener, app: Router) {
+pub async fn serve(listener: BeeperListener, app: Router) {
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(conn) => conn,
@@ -43,7 +43,7 @@ pub async fn serve(listener: BeepsListener, app: Router) {
 }
 
 /// Serves a single connection, in whichever protocol it turns out to speak.
-async fn serve_connection(mut stream: BeepsStream, app: Router) -> anyhow::Result<()> {
+async fn serve_connection(mut stream: BeeperStream, app: Router) -> anyhow::Result<()> {
     let sync = stream.sync_handle();
 
     match stream.protocol().await? {
@@ -55,7 +55,7 @@ async fn serve_connection(mut stream: BeepsStream, app: Router) -> anyhow::Resul
 /// Serves an HTTP/1.1 connection, which needs none of the dynamic table
 /// handling: HTTP/1.1 spells its headers out, so nothing the fast path answers
 /// can leave the server out of step.
-async fn serve_h1(stream: BeepsStream, app: Router) -> anyhow::Result<()> {
+async fn serve_h1(stream: BeeperStream, app: Router) -> anyhow::Result<()> {
     let service = service_fn(move |req: Request<hyper::body::Incoming>| {
         let app = app.clone();
         async move {
@@ -73,7 +73,7 @@ async fn serve_h1(stream: BeepsStream, app: Router) -> anyhow::Result<()> {
 
 /// Serves an HTTP/2 connection, applying the fast path's dynamic table updates
 /// as they arrive.
-async fn serve_h2(stream: BeepsStream, sync: SyncHandle, app: Router) -> anyhow::Result<()> {
+async fn serve_h2(stream: BeeperStream, sync: SyncHandle, app: Router) -> anyhow::Result<()> {
     let mut conn = h2::server::handshake(stream).await?;
 
     loop {

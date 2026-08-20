@@ -1,5 +1,5 @@
 #include "vmlinux.h"
-#include "beeps.h"
+#include "beeper.h"
 #include "xbpf.h"
 #include <bpf/bpf_helpers.h>
 

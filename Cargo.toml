@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["beeps", "example", "utils"]
+members = ["beeper", "example", "utils"]
 
 [workspace.package]
 license = "GPL-3.0"
 authors = [
     "lbrndnr <mail@laurinbrandner.ch>",
 ]
-repository = "https://github.com/lbrndnr/beeps"
+repository = "https://github.com/lbrndnr/beeper"
 readme = "README.md"
-keywords = ["ebpf", "bpf", "libbpf", "l7"]
+keywords = ["ebpf", "bpf", "libbpf", "l7", "http"]
 
 [patch.crates-io]
 h2 = { git = "https://github.com/lbrndnr/h2" }

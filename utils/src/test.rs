@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use as_bytes::AsBytes;
-use beeps::h2::{Action, Parser};
+use beeper::h2::{Action, Parser};
 use std::{
     io::{Error, ErrorKind},
     mem::MaybeUninit,

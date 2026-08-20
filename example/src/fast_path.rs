@@ -3,7 +3,7 @@
 use anyhow::{bail, Context, Result};
 use as_bytes::AsBytes;
 use axum::http;
-use beeps::{h1, h2};
+use beeper::{h1, h2};
 use httlib_huffman as huffman;
 use std::{
     collections::HashMap,
@@ -232,7 +232,7 @@ impl<'obj> FastPath<'obj> {
 
         let h1 = h1::Parser::new()
             .match_h2_preface()
-            .capture_hdr(&beeps::header::PATH)
+            .capture_hdr(&beeper::header::PATH)
             .capture_hdr(&http::header::CONTENT_LENGTH)
             .replace_parse_msg("parse_h1")
             .replace_extract("extract_h1_match")
@@ -240,7 +240,7 @@ impl<'obj> FastPath<'obj> {
             .attach(prog_fd)?;
 
         let h2 = h2::Parser::new()
-            .capture_hdr(&beeps::header::PATH)?
+            .capture_hdr(&beeper::header::PATH)?
             .capture_hdr(&http::header::CONTENT_LENGTH)?
             .replace_parse_msg("parse_h2")
             .replace_extract("extract_h2_match")

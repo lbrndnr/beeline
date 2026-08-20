@@ -18,7 +18,7 @@ use tokio::{
 
 const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-const TEST_HEADER: HeaderName = HeaderName::from_static("x-beeps");
+const TEST_HEADER: HeaderName = HeaderName::from_static("x-beeper");
 const TEST_VALUE: &str = "in-the-hive";
 
 /// The first index of the dynamic table, the static one taking up everything
@@ -106,8 +106,8 @@ fn request_block() -> Vec<u8> {
 
     // :authority, whose name is static index 1
     block.push(0x01);
-    block.push(b"beeps.test".len() as u8);
-    block.extend_from_slice(b"beeps.test");
+    block.push(b"beeper.test".len() as u8);
+    block.extend_from_slice(b"beeper.test");
 
     // and the entry that only exists because of a request the server never saw
     block.push(0x80 | FIRST_DYNAMIC_INDEX);

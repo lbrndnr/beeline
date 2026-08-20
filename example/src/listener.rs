@@ -7,7 +7,7 @@
 //! behind the server's back to the next message it does forward, as a frame of
 //! the unassigned type [`DT_SYNC_FRAME_TYPE`] (see `server.bpf.c`).
 //!
-//! [`BeepsStream`] takes those frames back out of the stream before the
+//! [`BeeperStream`] takes those frames back out of the stream before the
 //! server's HTTP/2 codec ever sees them and hands them to whoever holds the
 //! matching [`SyncHandle`], which is where the connection loop picks them up to
 //! prime its decoder. Everything else is passed through untouched, so to the
@@ -54,7 +54,7 @@ const READ_CHUNK: usize = 16 * 1024;
 /// The dynamic table updates the fast path has sent on a connection, in the
 /// order it applied them.
 ///
-/// [`BeepsStream`] fills this in as it comes across sync frames; the
+/// [`BeeperStream`] fills this in as it comes across sync frames; the
 /// connection loop drains it and replays the blocks into its HPACK decoder.
 #[derive(Clone, Default)]
 pub struct SyncHandle {
@@ -267,12 +267,12 @@ impl State {
 
 /// A [`TcpStream`] with the fast path's dynamic table updates filtered out of
 /// its read side. The write side is passed straight through.
-pub struct BeepsStream {
+pub struct BeeperStream {
     inner: TcpStream,
     scanner: Scanner,
 }
 
-impl BeepsStream {
+impl BeeperStream {
     /// Returns the handle the dynamic table updates seen on this connection are
     /// reported through.
     pub fn sync_handle(&self) -> SyncHandle {
@@ -322,7 +322,7 @@ impl BeepsStream {
     }
 }
 
-impl AsyncRead for BeepsStream {
+impl AsyncRead for BeeperStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -370,7 +370,7 @@ impl AsyncRead for BeepsStream {
     }
 }
 
-impl AsyncWrite for BeepsStream {
+impl AsyncWrite for BeeperStream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -389,12 +389,12 @@ impl AsyncWrite for BeepsStream {
 }
 
 /// A [`TcpListener`] whose connections filter out the fast path's dynamic table
-/// updates, see [`BeepsStream`].
-pub struct BeepsListener {
+/// updates, see [`BeeperStream`].
+pub struct BeeperListener {
     inner: TcpListener,
 }
 
-impl BeepsListener {
+impl BeeperListener {
     /// Wraps `inner` so that every connection accepted from it is scanned for
     /// dynamic table updates.
     pub fn new(inner: TcpListener) -> Self {
@@ -402,10 +402,10 @@ impl BeepsListener {
     }
 
     /// Accepts a connection, see [`TcpListener::accept`].
-    pub async fn accept(&self) -> io::Result<(BeepsStream, SocketAddr)> {
+    pub async fn accept(&self) -> io::Result<(BeeperStream, SocketAddr)> {
         let (stream, addr) = self.inner.accept().await?;
 
-        let stream = BeepsStream {
+        let stream = BeeperStream {
             inner: stream,
             scanner: Scanner::new(SyncHandle::default()),
         };
@@ -545,7 +545,7 @@ mod tests {
     async fn reads_through_a_socket_with_the_sync_frame_removed() {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("local_addr");
-        let listener = BeepsListener::new(listener);
+        let listener = BeeperListener::new(listener);
 
         let mut input = PREFACE.to_vec();
         input.extend_from_slice(&frame(DT_SYNC_FRAME_TYPE, b"the-update"));

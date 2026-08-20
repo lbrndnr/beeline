@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use ::h2::{RecvStream, client};
-use beeps::{h1, h2};
+use beeper::{h1, h2};
 use bytes::Bytes;
 use httlib_huffman as huffman;
 use http::{HeaderName, HeaderValue, Request, Response, header};
@@ -285,7 +285,7 @@ async fn parse_header_field_no_indexing_name_indexed_in_static_table() {
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[header::AUTHORIZATION]);
 
-    let auth_val = HeaderValue::from_static("Basic YmVlbGluZTpiZWVsaW5l"); // beeps:beeps in base64
+    let auth_val = HeaderValue::from_static("Basic YmVlbGluZTpiZWVsaW5l"); // beeper:beeper in base64
 
     let client = Client::connect(addr, None).await;
     client
@@ -359,7 +359,7 @@ async fn parse_header_field_incremental_indexing_name_indexed_in_static_table() 
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[header::USER_AGENT, PATH_HEADER]);
 
-    let user_agent_val = HeaderValue::from_static("beeps");
+    let user_agent_val = HeaderValue::from_static("beeper");
     let path = "/bee/1234";
     let path_val = HeaderValue::from_static(path);
 
@@ -390,7 +390,7 @@ async fn parse_header_field_incremental_indexing_new_name() {
     let _h1 = attach_preface_parser(prog.prog_fd());
     let _h2 = attach_h2_parser(prog.prog_fd(), &[TEST_HEADER, PATH_HEADER]);
 
-    let test_header_val = HeaderValue::from_static("beeps");
+    let test_header_val = HeaderValue::from_static("beeper");
     let path = "/bee/1234";
     let path_val = HeaderValue::from_static(&path);
 
@@ -419,7 +419,7 @@ async fn parse_header_field_incremental_indexing_indexed_in_dynamic_table() {
         &[header::USER_AGENT, header::ACCEPT_LANGUAGE],
     );
 
-    let user_agent_val = HeaderValue::from_static("beeps");
+    let user_agent_val = HeaderValue::from_static("beeper");
     let lang_val = HeaderValue::from_static("sumsum");
 
     let client = Client::connect(addr, None).await;
@@ -716,7 +716,7 @@ async fn parse_frame_after_an_unknown_one() {
 
     // an unassigned frame type, which RFC 7540 says a peer has to discard
     // rather than choke on
-    client.send_raw(&frame(0xFA, 0, 0, b"beeps")).await;
+    client.send_raw(&frame(0xFA, 0, 0, b"beeper")).await;
 
     // the parser has to pick the stream back up on the next frame
     let accept_val = HeaderValue::from_static("*/*");

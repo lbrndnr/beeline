@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 
 mod dfa;
 mod parser;
-pub use parser::{AttachedParser, Parser, ip4_addr, ip4_conn};
+pub use parser::{ip4_addr, ip4_conn, AttachedParser, Parser};
 
 impl From<SocketAddr> for ip4_addr {
     /// Converts `addr` into the address the BPF programs key their per
@@ -19,7 +19,7 @@ impl From<SocketAddr> for ip4_addr {
     ///
     /// # Panics
     ///
-    /// Panics if `addr` is an IPv6 address, which Beeline does not support yet.
+    /// Panics if `addr` is an IPv6 address, which Beeper does not support yet.
     fn from(addr: SocketAddr) -> Self {
         match addr {
             SocketAddr::V4(addr) => ip4_addr {

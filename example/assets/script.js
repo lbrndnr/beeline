@@ -1,4 +1,4 @@
-// The client side of the beeps example. It reloads every asset the page
+// The client side of the beeper example. It reloads every asset the page
 // references, times each one, and reports what came back, which is the
 // difference the fast path is meant to make visible: the small assets are
 // answered from the kernel, the images are not.

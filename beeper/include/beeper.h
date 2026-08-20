@@ -3,12 +3,12 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
-// The interface between a BPF program and the parsers beeps attaches to it:
+// The interface between a BPF program and the parsers beeper attaches to it:
 // the types a parser reports its results in, and the macros declaring the
 // functions it replaces.
 
-#ifndef __BEEPS_H__
-#define __BEEPS_H__
+#ifndef __BEEPER_H__
+#define __BEEPER_H__
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -47,7 +47,7 @@ struct ip4_addr {
     u32 port;
 };
 
-// The pair of endpoints identifying a connection. Beeline keys the state it
+// The pair of endpoints identifying a connection. Beeper keys the state it
 // keeps per connection with it, e.g. the dynamic table of an HTTP/2 peer.
 struct ip4_conn {
     struct ip4_addr local;
@@ -96,16 +96,16 @@ struct h2_frame {
 // The number of bytes of a name or a value that are kept in a dynamic table
 // entry. Longer fields are truncated, which bounds the copies for the
 // verifier. Must stay in sync with `HEADER_FIELD_MAXLEN` of h2/parser.bpf.c.
-#define BEEPS_H2_FIELD_MAXLEN 128
+#define BEEPER_H2_FIELD_MAXLEN 128
 
 // A single field of the HPACK static or dynamic table, stored the way it
 // appeared on the wire. `key_huff` and `val_huff` say whether that was the
 // Huffman coded form; a peer may send either, so a reader that hands an entry
 // on has to say which one it is holding.
 struct header_field {
-    u8 key[BEEPS_H2_FIELD_MAXLEN];
+    u8 key[BEEPER_H2_FIELD_MAXLEN];
     u8 key_len;
-    u8 val[BEEPS_H2_FIELD_MAXLEN];
+    u8 val[BEEPER_H2_FIELD_MAXLEN];
     u8 val_len;
     u8 key_huff;
     u8 val_huff;
@@ -119,9 +119,9 @@ struct trans {
     u16 action;
 };
 
-// Stubs for the parser programs beeps attaches with `freplace`.
+// Stubs for the parser programs beeper attaches with `freplace`.
 //
-// A program that uses a beeps parser declares the functions it passes to the
+// A program that uses a beeper parser declares the functions it passes to the
 // `replace_*` builder methods with these macros. Each one expands to a global
 // (`__noinline`) function with the exact signature the corresponding parser
 // program expects.
@@ -132,7 +132,7 @@ struct trans {
 
 // Creates `name`, a stub for the HTTP/1.x message parser
 // (`h1::Parser::replace_parse_msg`).
-#define BEEPS_H1_PARSE_MSG(name)                                                                 \
+#define BEEPER_H1_PARSE_MSG(name)                                                                 \
     __noinline int name(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull) {             \
         int ret = -1;                                                                              \
                                                                                                    \
@@ -149,7 +149,7 @@ struct trans {
 
 // Creates `name`, a stub for the HTTP/1.x sk_buff parser
 // (`h1::Parser::replace_parse_skb`).
-#define BEEPS_H1_PARSE_SKB(name)                                                                 \
+#define BEEPER_H1_PARSE_SKB(name)                                                                 \
     __noinline int name(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull,               \
                         u16 *null_prefix) {                                                        \
         int ret = -1;                                                                              \
@@ -168,7 +168,7 @@ struct trans {
 
 // Creates `name`, a stub for the HTTP/1.x buffer parser
 // (`h1::Parser::replace_parse_buf`).
-#define BEEPS_H1_PARSE_BUF(name)                                                                 \
+#define BEEPER_H1_PARSE_BUF(name)                                                                 \
     __noinline int name(const struct bpf_dynptr *buf_ptr, u32 len,                                 \
                         struct parse_res *pres __arg_nonnull, u16 *null_prefix) {                  \
         int ret = -1;                                                                              \
@@ -184,7 +184,7 @@ struct trans {
 
 // Creates `name`, a stub for the HTTP/2 message parser
 // (`h2::Parser::replace_parse_msg`).
-#define BEEPS_H2_PARSE_MSG(name)                                                                 \
+#define BEEPER_H2_PARSE_MSG(name)                                                                 \
     __noinline int name(struct sk_msg_md *msg, struct parse_res *pres __arg_nonnull,               \
                         struct h2_frame *frame __arg_nonnull) {                                    \
         int ret = -1;                                                                              \
@@ -203,7 +203,7 @@ struct trans {
 
 // Creates `name`, a stub for the HTTP/2 sk_buff parser
 // (`h2::Parser::replace_parse_skb`).
-#define BEEPS_H2_PARSE_SKB(name)                                                                 \
+#define BEEPER_H2_PARSE_SKB(name)                                                                 \
     __noinline int name(struct __sk_buff *skb, struct parse_res *pres __arg_nonnull,               \
                         struct h2_frame *frame __arg_nonnull, u16 *null_prefix) {                  \
         int ret = -1;                                                                              \
@@ -223,7 +223,7 @@ struct trans {
 
 // Creates `name`, a stub for the HTTP/2 buffer parser
 // (`h2::Parser::replace_parse_buf`).
-#define BEEPS_H2_PARSE_BUF(name)                                                                 \
+#define BEEPER_H2_PARSE_BUF(name)                                                                 \
     __noinline int name(const struct bpf_dynptr *buf_ptr, struct ip4_conn *conn,                   \
                         struct parse_res *pres __arg_nonnull,                                      \
                         struct h2_frame *frame __arg_nonnull, u16 *null_prefix) {                  \
@@ -241,7 +241,7 @@ struct trans {
 
 // Creates `name`, a stub reporting whether the match at `idx` was found
 // (`replace_matched`).
-#define BEEPS_MATCHED(name)                                                                      \
+#define BEEPER_MATCHED(name)                                                                      \
     __noinline bool name(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull,  \
                          u8 idx) {                                                                 \
         bool ret = false;                                                                          \
@@ -256,7 +256,7 @@ struct trans {
 
 // Creates `name`, a stub reading the match at `idx` out of `msg`
 // (`replace_extract`).
-#define BEEPS_EXTRACT_MATCH(name)                                                                \
+#define BEEPER_EXTRACT_MATCH(name)                                                                \
     __noinline int name(const struct sk_msg_md *msg, const struct parse_res *pres __arg_nonnull,   \
                         u8 idx, struct hdr_str *str __arg_nonnull) {                               \
         int ret = -1;                                                                              \
@@ -275,7 +275,7 @@ struct trans {
 // (`h2::Parser::replace_get_dt_entry`). `idx` is counted the HPACK way, i.e. 1
 // is the most recently added entry and `dt_count` (see `h2_frame`) the oldest
 // still live one. Returns 0 on success, -1 if there is no such entry.
-#define BEEPS_H2_GET_DT_ENTRY(name)                                                              \
+#define BEEPER_H2_GET_DT_ENTRY(name)                                                              \
     __noinline int name(const struct ip4_conn *conn __arg_nonnull, u32 idx,                        \
                         struct header_field *out __arg_nonnull) {                                  \
         int ret = -1;                                                                              \
@@ -288,4 +288,4 @@ struct trans {
         return ret;                                                                                \
     }
 
-#endif // __BEEPS_H__
+#endif // __BEEPER_H__

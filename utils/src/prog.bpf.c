@@ -1,4 +1,4 @@
-#include "beeps.h"
+#include "beeper.h"
 #include "xbpf.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -43,13 +43,13 @@ struct {
     __type(value, char[128]);
 } matches SEC(".maps");
 
-// The functions beeps replaces with a parser when a test attaches one.
-BEEPS_MATCHED(matched_h1)
-BEEPS_EXTRACT_MATCH(extract_h1_match)
-BEEPS_H1_PARSE_MSG(parse_h1)
+// The functions beeper replaces with a parser when a test attaches one.
+BEEPER_MATCHED(matched_h1)
+BEEPER_EXTRACT_MATCH(extract_h1_match)
+BEEPER_H1_PARSE_MSG(parse_h1)
 
-BEEPS_EXTRACT_MATCH(extract_h2_match)
-BEEPS_H2_PARSE_MSG(parse_h2)
+BEEPER_EXTRACT_MATCH(extract_h2_match)
+BEEPER_H2_PARSE_MSG(parse_h2)
 
 // Parses the messages of the connection under test and records the captured
 // ranges in `matches`. A message that carries the HTTP/2 preface upgrades its

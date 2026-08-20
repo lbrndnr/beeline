@@ -1,17 +1,18 @@
 #![allow(unused_imports)]
 use crate::{
     autoload_and_attach,
-    h1::{Action, CaptureId, MatchId, StateId, dfa::Dfa},
+    h1::{dfa::Dfa, Action, CaptureId, MatchId, StateId},
     header::{METHOD, PATH, STATUS},
 };
 use anyhow::Result;
 use http::HeaderName;
 use std::{collections::HashMap, mem::MaybeUninit};
-use tracing::{Level, debug, trace, warn};
+use tracing::{debug, trace, warn, Level};
 use types::*;
 use xbpf::libbpf::{
-    self as libbpf_rs, Link, MapCore, OpenObject,
+    self as libbpf_rs,
     skel::{OpenSkel, Skel, SkelBuilder},
+    Link, MapCore, OpenObject,
 };
 
 /// The sequence terminating the lines of a message.
@@ -320,7 +321,7 @@ impl Parser {
             links.push(skel.progs.extract_match.attach()?);
         }
 
-        debug!("Beeline http/1 attached");
+        debug!("Beeper http/1 attached");
 
         anyhow::Ok(AttachedParser { links })
     }
@@ -335,7 +336,10 @@ impl Parser {
             let t = new_transition(*to, action, data);
             trace!(
                 "inject; from={} to={} input={} action={:?}",
-                from.0, to.0, *input as u8 as char, action
+                from.0,
+                to.0,
+                *input as u8 as char,
+                action
             );
             data.s2ts[s][*input as usize] = t;
         }

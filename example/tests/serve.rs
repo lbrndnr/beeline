@@ -6,7 +6,7 @@
 //! sync frame is written onto the wire by the test itself.
 
 use axum::{Router, routing::get};
-use example::{listener::BeepsListener, server};
+use example::{listener::BeeperListener, server};
 use httlib_huffman as huffman;
 use http::HeaderValue;
 use std::net::SocketAddr;
@@ -20,7 +20,7 @@ const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// Must stay in sync with `DT_SYNC_FRAME_TYPE` in `server.bpf.c`.
 const DT_SYNC_FRAME_TYPE: u8 = 0xFB;
 
-const TEST_HEADER: &str = "x-beeps";
+const TEST_HEADER: &str = "x-beeper";
 const TEST_VALUE: &str = "in-the-hive";
 
 const FIRST_DYNAMIC_INDEX: u8 = 62;
@@ -96,7 +96,7 @@ async fn start() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");
 
-    tokio::spawn(server::serve(BeepsListener::new(listener), app));
+    tokio::spawn(server::serve(BeeperListener::new(listener), app));
 
     addr
 }
@@ -147,8 +147,8 @@ fn request_block(path: &str, indexed: bool) -> Vec<u8> {
     block.extend_from_slice(path.as_bytes());
 
     block.push(0x01);
-    block.push(b"beeps.test".len() as u8);
-    block.extend_from_slice(b"beeps.test");
+    block.push(b"beeper.test".len() as u8);
+    block.extend_from_slice(b"beeper.test");
 
     if indexed {
         block.push(0x80 | FIRST_DYNAMIC_INDEX);
@@ -169,7 +169,7 @@ async fn serves_http1() {
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     stream
-        .write_all(b"GET /hello HTTP/1.1\r\nHost: beeps.test\r\nConnection: close\r\n\r\n")
+        .write_all(b"GET /hello HTTP/1.1\r\nHost: beeper.test\r\nConnection: close\r\n\r\n")
         .await
         .expect("request");
 

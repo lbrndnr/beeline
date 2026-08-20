@@ -1,21 +1,22 @@
 #![allow(unused_imports)]
 use crate::{
     autoload_and_attach,
-    h2::{Action, create_header_maps, dfa::Dfa},
+    h2::{create_header_maps, dfa::Dfa, Action},
 };
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use as_bytes::AsBytes;
 use httlib_huffman as huffman;
 use http::HeaderName;
 use plain::Plain;
 use std::mem::MaybeUninit;
 use std::net::SocketAddr;
-use tracing::{Level, debug, warn};
+use tracing::{debug, warn, Level};
 use types::*;
 pub use types::{ip4_addr, ip4_conn};
 use xbpf::libbpf::{
-    self as libbpf_rs, Link, MapCore, MapFlags, MapHandle, OpenObject,
+    self as libbpf_rs,
     skel::{OpenSkel, Skel, SkelBuilder},
+    Link, MapCore, MapFlags, MapHandle, OpenObject,
 };
 
 extern crate plain;
@@ -136,7 +137,7 @@ impl Parser {
     }
 
     /// Specifies the function template in the target program to be replaced with a reader of the
-    /// connection's dynamic table (`BEEPS_H2_GET_DT_ENTRY`). The function will not be replaced
+    /// connection's dynamic table (`BEEPER_H2_GET_DT_ENTRY`). The function will not be replaced
     /// until `attach` is called.
     ///
     /// # Arguments
@@ -303,7 +304,7 @@ impl Parser {
         let static_table = MapHandle::from_map_id(id)?;
         self.populate_static_table(&static_table)?;
 
-        debug!("Beeline http/2 attached");
+        debug!("Beeper http/2 attached");
 
         let id = skel.maps.dynamic_table_info.info()?.info.id;
         Ok(AttachedParser {
