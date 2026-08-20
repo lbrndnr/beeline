@@ -372,11 +372,6 @@ static __always_inline int _next_hpack(u8 c, enum h2_parse_state *ps __arg_nonnu
 // A caller that finds `j` back at 0 with `ps` at an integer state has just read
 // the last byte of that integer, and one that finds `ps` at a string state has
 // just read a byte of the string.
-// `huff` is set from the top bit of every integer's first byte. That bit only
-// means anything on the length of a string, where it says whether the string is
-// Huffman coded, and a caller reads it back right after the length that carries
-// it; setting it on the others as well keeps this off the parsing loop's
-// critical path, which the verifier is very sensitive to.
 static __always_inline void _parse_hpack(u8 c, enum h2_parse_state *ps, u32 *n, u32 *m, u32 *k, u8 *j, bool *huff) {
     if (*j > 0) {
         if (PS_IS_STR(*ps)) {
@@ -537,9 +532,6 @@ __noinline __weak int _add_dynamic_table_entry(const struct msg_ctx *ctx __arg_n
     dt_val->field.key_huff = key_huff;
     dt_val->field.val_huff = val_huff;
 
-    // RFC 7541 sizes an entry by the length of the name and value as text, so a
-    // Huffman coded string counts for what it decodes to, while one that was
-    // spelled out already is its own length
     u16 key_len_decoded = key_huff ? hpack_huffman_decoded_len(dt_val->field.key, key_len) : key_len;
     u16 val_len_decoded = val_huff ? hpack_huffman_decoded_len(dt_val->field.val, val_len) : val_len;
     dt_val->size = key_len_decoded + val_len_decoded + 32;
