@@ -23,7 +23,7 @@ use xbpf::libbpf::{
     skel::{OpenSkel, Skel, SkelBuilder},
 };
 
-xbpf::include_bpf!("server");
+xbpf::include_bpf!("fast_path");
 
 fn huffman_encode(val: &str) -> Vec<u8> {
     let mut res = Vec::new();
@@ -31,7 +31,7 @@ fn huffman_encode(val: &str) -> Vec<u8> {
     res
 }
 
-// Must stay in sync with the corresponding `#define`s in server.bpf.c.
+// Must stay in sync with the corresponding `#define`s in fastpath.bpf.c.
 const MAX_ROUTES: usize = 16;
 const MAX_ROUTE_PATH: usize = 64;
 const MAX_ROUTE_BODY: usize = 32768;
@@ -42,9 +42,9 @@ const MAX_ROUTE_BODY: usize = 32768;
 /// parser and answers the ones whose path it has a pre-rendered response for
 /// straight from the kernel. Everything else is passed on to the user space
 /// server. The fast path stays attached until this value is dropped.
-pub struct Server<'obj> {
+pub struct FastPath<'obj> {
     #[allow(dead_code)]
-    skel: ServerSkel<'obj>,
+    skel: FastPathSkel<'obj>,
     #[allow(dead_code)]
     sockops: Link,
     #[allow(dead_code)]
@@ -53,9 +53,9 @@ pub struct Server<'obj> {
     h2: h2::AttachedParser,
 }
 
-unsafe impl<'obj> Send for Server<'obj> {}
+unsafe impl<'obj> Send for FastPath<'obj> {}
 
-unsafe impl<'obj> Sync for Server<'obj> {}
+unsafe impl<'obj> Sync for FastPath<'obj> {}
 
 /// Returns the value of the `Content-Type` header to serve `file` with, based
 /// on its extension.
@@ -130,7 +130,7 @@ fn render_h2_response(file: &Path) -> Result<(Vec<u8>, [u32; 2])> {
     Ok((resp, [5, data_off as u32 + 5]))
 }
 
-impl<'obj> Server<'obj> {
+impl<'obj> FastPath<'obj> {
     /// Attaches the server's fast path.
     ///
     /// `routes` maps request paths (e.g. `/index.html`) to files on disk. The
@@ -180,7 +180,7 @@ impl<'obj> Server<'obj> {
             .next()
             .expect("Failed to parse address");
 
-        let skel_builder = ServerSkelBuilder::default();
+        let skel_builder = FastPathSkelBuilder::default();
         let mut open_skel = skel_builder.open(open_obj)?;
         if tracing::event_enabled!(Level::TRACE) {
             open_skel.progs.msg_verdict.set_log_level(1);

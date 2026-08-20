@@ -2,8 +2,8 @@
 
 use axum::http::StatusCode;
 use clap::Parser;
-use example::{h2serve, listener::BeelineListener};
-use fastpath::Server;
+use example::{listener::BeelineListener, server};
+use fast_path::FastPath;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tower_http::{
@@ -14,7 +14,7 @@ use tower_http::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use xbpf::OpenObject;
 
-mod fastpath;
+mod fast_path;
 
 /// A static file server that can answer its smaller assets from eBPF.
 #[derive(Parser)]
@@ -82,12 +82,12 @@ async fn main() {
         None
     } else {
         let routes = fastpath_routes(assets_dir);
-        Some(Server::attach(args.addr, &mut open_obj, routes).expect("attach"))
+        Some(FastPath::attach(args.addr, &mut open_obj, routes).expect("attach"))
     };
 
     let listener = TcpListener::bind(args.addr).await.unwrap();
     let listener = BeelineListener::new(listener);
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
 
-    h2serve::serve(listener, app).await;
+    server::serve(listener, app).await;
 }
