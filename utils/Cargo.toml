@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.104"
 as-bytes = "0.2.0"
 axum = { version = "0.8.9", features = ["http2"] }
-beeline = { path = "../beeline", features = ["h1", "h2"] }
+beeps = { path = "../beeps", features = ["h1", "h2"] }
 bytes = "1.12.1"
 libc = "0.2.189"
 tokio = { version = "1.53", features = ["full"] }
@@ -18,4 +18,4 @@ xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
 
 [build-dependencies]
 xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
-beeline = { path = "../beeline", features = ["build"] }
+beeps = { path = "../beeps", features = ["build"] }

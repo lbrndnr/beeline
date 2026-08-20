@@ -1,4 +1,4 @@
-# Beeline: Application-Layer Parsing in eBPF
+# Beeps: Application-Layer Parsing in eBPF
 
 <!--[![Crates.io][crates-badge]][crates-url]-->
 [![GPL-v3 licensed][gpl-badge]][gpl-url]
@@ -9,12 +9,12 @@
 [crates-url]: https://crates.io/crates/bpf-tracing-->
 [gpl-badge]: https://img.shields.io/badge/License-GPL_v3-blue.svg
 [gpl-url]: LICENSE
-[actions-badge]: https://github.com/lbrndnr/beeline/actions/workflows/ci.yml/badge.svg
-[actions-url]: https://github.com/lbrndnr/beeline/actions/workflows/ci.yml
+[actions-badge]: https://github.com/lbrndnr/beeps/actions/workflows/ci.yml/badge.svg
+[actions-url]: https://github.com/lbrndnr/beeps/actions/workflows/ci.yml
 [doi-badge]: https://img.shields.io/badge/DOI-10.48550/arXiv.2605.31084-purple.svg
 [doi-url]: https://doi.org/10.48550/arXiv.2605.31084
 
-Beeline is an application-layer parser for eBPF. This allows you to process protocols (see below for a table of supported protocols) directly in the kernel, which can be much more efficient than user space processing. With Beeline, you can for example monitor application-layer traffic, redirect it based on its payload, or respond to it, directly from the kernel. For more information, please have a look at the [full paper][doi-url].
+Beeps ([BEEline][doi-url]'s Parsing Stage) is an application-layer parser for eBPF. This allows you to process protocols (see below for a table of supported protocols) directly in the kernel, which can be much more efficient than user space processing. With Beeps, you can for example monitor application-layer traffic, redirect it based on its payload, or respond to it, directly from the kernel. For more information, please have a look at the [full paper][doi-url].
 
 Protocol      | Status  | Minimal Kernel Version
 ------------- | ------- | ----------------------
@@ -24,13 +24,13 @@ gRPC          | WIP     |
 
 ## Build
 
-To build and test Beeline, you need to install the following packages:
+To build and test Beeps, you need to install the following packages:
 
 ```bash
 sudo apt install clang-18 llvm-18 libelf-dev zlib1g-dev linux-headers-`uname -r` linux-tools-`uname -r` 
 ```
 
-You should now be able to compile and test Beeline as follows:
+You should now be able to compile and test Beeps as follows:
 
 ```bash
 RUST_LOG=trace cargo test
@@ -38,7 +38,7 @@ RUST_LOG=trace cargo test
 
 ## Running the Example
 
-Once you can build Beeline, you can also run the example. It is a simple HTTP server, with Beeline attached to it. It will serve some static files directly from the kernel. To run it, first start the server:
+Once you can build Beeps, you can also run the example. It is a simple HTTP server, with Beeps attached to it. It will serve some static files directly from the kernel. To run it, first start the server:
 ```bash
 cargo run --bin example
 ```
@@ -55,7 +55,7 @@ Served request
 
 To benchmark the server, run the following:
 ```bash
-# server accelerated with beeline
+# server accelerated with beeps
 RUST_LOG= cargo run -r --bin example
 # baseline: server without the fastpath
 RUST_LOG= cargo run -r --bin example -- --no-fastpath

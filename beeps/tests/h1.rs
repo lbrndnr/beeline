@@ -1,4 +1,4 @@
-use beeline::h1;
+use beeps::h1;
 use http::{HeaderName, HeaderValue, header};
 use reqwest::Client;
 use std::net::SocketAddr;
@@ -118,7 +118,7 @@ async fn ignore_header_case() {
     let _h1 = attach_h1_parser(prog.prog_fd(), true, &[header::USER_AGENT]);
 
     // reqwest normalizes header names, so the request is written to the socket as is
-    let user_agent = HeaderValue::from_static("beeline");
+    let user_agent = HeaderValue::from_static("beeps");
     let req = format!(
         "GET / HTTP/1.1\r\nHost: {addr}\r\nUsEr-aGEnT: {}\r\n\r\n",
         user_agent.to_str().unwrap()
@@ -142,7 +142,7 @@ async fn ignores_header_whitespace() {
     let _h1 = attach_h1_parser(prog.prog_fd(), true, &[header::USER_AGENT]);
 
     // the whitespace between the colon and the value is not part of the value
-    let user_agent = HeaderValue::from_static("beeline");
+    let user_agent = HeaderValue::from_static("beeps");
     let req = format!(
         "GET / HTTP/1.1\r\nHost: {addr}\r\nuser-agent:  \t{}\r\n\r\n",
         user_agent.to_str().unwrap()
@@ -156,7 +156,7 @@ async fn ignores_header_whitespace() {
     );
     assert_match_eq(&prog, 1, Some(&user_agent));
 
-    // beeline also matches whitespace between the name and the colon. the server
+    // beeps also matches whitespace between the name and the colon. the server
     // rejects such a request as a smuggling risk, but it is parsed off the wire
     // before it ever gets there, so its status is of no interest here
     let user_agent = HeaderValue::from_static("sumsum");
@@ -184,7 +184,7 @@ async fn parse_subsequent_headers() {
     );
 
     let client = build_client();
-    let user_agent = HeaderValue::from_static("beeline");
+    let user_agent = HeaderValue::from_static("beeps");
     let lang = HeaderValue::from_static("sumsum");
     let resp = client
         .get(format!("http://{}", addr))
@@ -209,7 +209,7 @@ async fn parse_status_line_only() {
     let _h1 = attach_h1_parser(
         prog.prog_fd(),
         true,
-        &[beeline::header::PATH, beeline::header::METHOD],
+        &[beeps::header::PATH, beeps::header::METHOD],
     );
 
     let client = build_client();
@@ -236,7 +236,7 @@ async fn parse_status_line_and_subsequent_header() {
     let _h1 = attach_h1_parser(
         prog.prog_fd(),
         true,
-        &[beeline::header::PATH, header::CONTENT_LENGTH],
+        &[beeps::header::PATH, header::CONTENT_LENGTH],
     );
 
     let body = "Hello, world!";
@@ -265,7 +265,7 @@ async fn parse_status_code() {
     let _h1 = attach_h1_parser(
         prog.prog_fd(),
         true,
-        &[beeline::header::STATUS, header::CONTENT_LENGTH],
+        &[beeps::header::STATUS, header::CONTENT_LENGTH],
     );
 
     let body = "Hello, world!";

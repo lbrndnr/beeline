@@ -2,7 +2,7 @@
 
 use axum::http::StatusCode;
 use clap::Parser;
-use example::{listener::BeelineListener, server};
+use example::{listener::BeepsListener, server};
 use fast_path::FastPath;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
@@ -86,7 +86,7 @@ async fn main() {
     };
 
     let listener = TcpListener::bind(args.addr).await.unwrap();
-    let listener = BeelineListener::new(listener);
+    let listener = BeepsListener::new(listener);
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
 
     server::serve(listener, app).await;

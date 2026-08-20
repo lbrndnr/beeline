@@ -1,5 +1,5 @@
 #include "vmlinux.h"
-#include "beeline.h"
+#include "beeps.h"
 #include "xbpf.h"
 #include <bpf/bpf_helpers.h>
 
@@ -31,10 +31,10 @@ enum h2_parse_state {
 
 // The number of bytes of a name or a value that are kept in a table entry.
 // Longer fields are truncated, which bounds the copies for the verifier.
-// `header_field`, which both tables are made of, is declared in beeline.h so
+// `header_field`, which both tables are made of, is declared in beeps.h so
 // that a target program reading dynamic table entries with
-// `BEELINE_H2_GET_DT_ENTRY` agrees on its layout.
-#define HEADER_FIELD_MAXLEN BEELINE_H2_FIELD_MAXLEN
+// `BEEPS_H2_GET_DT_ENTRY` agrees on its layout.
+#define HEADER_FIELD_MAXLEN BEEPS_H2_FIELD_MAXLEN
 #define HEADER_FIELD_MASK (HEADER_FIELD_MAXLEN - 1)
 
 // The number of entries of the HPACK static table, see appendix A of RFC 7541.

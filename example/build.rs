@@ -1,4 +1,4 @@
-use beeline::build::clang_args;
+use beeps::build::clang_args;
 use xbpf::build::Builder;
 
 fn main() {

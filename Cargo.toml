@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["beeline", "example", "utils"]
+members = ["beeps", "example", "utils"]
 
 [workspace.package]
 license = "GPL-3.0"
 authors = [
     "lbrndnr <mail@laurinbrandner.ch>",
 ]
-repository = "https://github.com/lbrndnr/beeline"
+repository = "https://github.com/lbrndnr/beeps"
 readme = "README.md"
 keywords = ["ebpf", "bpf", "libbpf", "l7"]
 

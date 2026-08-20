@@ -1,4 +1,4 @@
-#include "beeline.h"
+#include "beeps.h"
 #include "xbpf.h"
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -55,7 +55,7 @@ volatile const u32 port;
 #define H2_HANDSHAKED 2
 
 // The number of entries of the HPACK static table. A dynamic table entry is
-// addressed by the index that follows them, see `BEELINE_H2_GET_DT_ENTRY`.
+// addressed by the index that follows them, see `BEEPS_H2_GET_DT_ENTRY`.
 #define STATIC_TABLE_SIZE 61
 
 // The frame type the fast path prepends its dynamic table changes to a
@@ -74,8 +74,8 @@ volatile const u32 port;
 
 // The most bytes a sync frame's body can take up. An entry needs at most two
 // length bytes plus a name and a value, both of which the parser truncates to
-// `BEELINE_H2_FIELD_MAXLEN`.
-#define MAX_SYNC_BODY (MAX_SYNC_ENTRIES * (2 + 2 * BEELINE_H2_FIELD_MAXLEN))
+// `BEEPS_H2_FIELD_MAXLEN`.
+#define MAX_SYNC_BODY (MAX_SYNC_ENTRIES * (2 + 2 * BEEPS_H2_FIELD_MAXLEN))
 
 // The size of the buffer the body is built up in, with room to spare so that
 // an offset clamped to `MAX_SYNC_BODY` is always well inside it.
@@ -149,15 +149,15 @@ struct {
     __type(value, u8);
 } route_idx SEC(".maps");
 
-// The functions beeline replaces with an HTTP/1.1 parser.
-BEELINE_MATCHED(matched_h1)
-BEELINE_EXTRACT_MATCH(extract_h1_match)
-BEELINE_H1_PARSE_MSG(parse_h1)
+// The functions beeps replaces with an HTTP/1.1 parser.
+BEEPS_MATCHED(matched_h1)
+BEEPS_EXTRACT_MATCH(extract_h1_match)
+BEEPS_H1_PARSE_MSG(parse_h1)
 
-// The functions beeline replaces with an HTTP/2 parser.
-BEELINE_EXTRACT_MATCH(extract_h2_match)
-BEELINE_H2_PARSE_MSG(parse_h2)
-BEELINE_H2_GET_DT_ENTRY(get_dt_entry)
+// The functions beeps replaces with an HTTP/2 parser.
+BEEPS_EXTRACT_MATCH(extract_h2_match)
+BEEPS_H2_PARSE_MSG(parse_h2)
+BEEPS_H2_GET_DT_ENTRY(get_dt_entry)
 
 // Appends `len` bytes of `src` to `buf`. Returns 0 on success, -1 if the
 // buffer is full.

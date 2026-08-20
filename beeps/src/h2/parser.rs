@@ -136,13 +136,16 @@ impl Parser {
     }
 
     /// Specifies the function template in the target program to be replaced with a reader of the
-    /// connection's dynamic table (`BEELINE_H2_GET_DT_ENTRY`). The function will not be replaced
+    /// connection's dynamic table (`BEEPS_H2_GET_DT_ENTRY`). The function will not be replaced
     /// until `attach` is called.
     ///
     /// # Arguments
     ///
     /// * `get_dynamic_table_entry_fn` - The name of the dynamic table entry reader function in the target program
-    pub fn replace_get_dynamic_table_entry<S: ToString>(mut self, get_dynamic_table_entry_fn: S) -> Parser {
+    pub fn replace_get_dynamic_table_entry<S: ToString>(
+        mut self,
+        get_dynamic_table_entry_fn: S,
+    ) -> Parser {
         self.get_dynamic_table_entry_fn = Some(get_dynamic_table_entry_fn.to_string());
         self
     }

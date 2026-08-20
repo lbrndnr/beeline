@@ -1,14 +1,14 @@
 //! Tests the server's connection loop end to end, without the fast path.
 //!
-//! Everything here goes over a real socket into [`h2serve::serve`], so it
+//! Everything here goes over a real socket into [`server::serve`], so it
 //! covers the listener wrapper, the protocol split and the dynamic table
 //! handover together. The one thing it does not need is eBPF: the fast path's
 //! sync frame is written onto the wire by the test itself.
 
 use axum::{Router, routing::get};
-use example::{h2serve, listener::BeelineListener};
-use http::HeaderValue;
+use example::{listener::BeepsListener, server};
 use httlib_huffman as huffman;
+use http::HeaderValue;
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -20,7 +20,7 @@ const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// Must stay in sync with `DT_SYNC_FRAME_TYPE` in `server.bpf.c`.
 const DT_SYNC_FRAME_TYPE: u8 = 0xFB;
 
-const TEST_HEADER: &str = "x-beeline";
+const TEST_HEADER: &str = "x-beeps";
 const TEST_VALUE: &str = "in-the-hive";
 
 const FIRST_DYNAMIC_INDEX: u8 = 62;
@@ -96,7 +96,7 @@ async fn start() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");
 
-    tokio::spawn(h2serve::serve(BeelineListener::new(listener), app));
+    tokio::spawn(server::serve(BeepsListener::new(listener), app));
 
     addr
 }
@@ -108,7 +108,10 @@ async fn request_h2(addr: SocketAddr, block: Vec<u8>, update: Option<Vec<u8>>) -
     let mut stream = TcpStream::connect(addr).await.expect("connect");
 
     stream.write_all(PREFACE).await.expect("preface");
-    stream.write_all(&frame(0x04, 0, 0, &[])).await.expect("settings");
+    stream
+        .write_all(&frame(0x04, 0, 0, &[]))
+        .await
+        .expect("settings");
 
     // the fast path prepends the update to the very message that carries the
     // request it belongs to, so both go out together
@@ -144,8 +147,8 @@ fn request_block(path: &str, indexed: bool) -> Vec<u8> {
     block.extend_from_slice(path.as_bytes());
 
     block.push(0x01);
-    block.push(b"beeline.test".len() as u8);
-    block.extend_from_slice(b"beeline.test");
+    block.push(b"beeps.test".len() as u8);
+    block.extend_from_slice(b"beeps.test");
 
     if indexed {
         block.push(0x80 | FIRST_DYNAMIC_INDEX);
@@ -166,7 +169,7 @@ async fn serves_http1() {
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     stream
-        .write_all(b"GET /hello HTTP/1.1\r\nHost: beeline.test\r\nConnection: close\r\n\r\n")
+        .write_all(b"GET /hello HTTP/1.1\r\nHost: beeps.test\r\nConnection: close\r\n\r\n")
         .await
         .expect("request");
 
@@ -174,7 +177,10 @@ async fn serves_http1() {
     stream.read_to_end(&mut got).await.expect("read");
 
     let got = String::from_utf8_lossy(&got);
-    assert!(got.starts_with("HTTP/1.1 200"), "unexpected response: {got}");
+    assert!(
+        got.starts_with("HTTP/1.1 200"),
+        "unexpected response: {got}"
+    );
     assert!(got.ends_with("hello"), "unexpected response: {got}");
 }
 

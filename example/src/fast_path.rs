@@ -1,9 +1,9 @@
 #![allow(unused_imports)]
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use as_bytes::AsBytes;
 use axum::http;
-use beeline::{h1, h2};
+use beeps::{h1, h2};
 use httlib_huffman as huffman;
 use std::{
     collections::HashMap,
@@ -16,11 +16,12 @@ use std::{
     },
     path::Path,
 };
-use tracing::{Level, debug, info, warn};
+use tracing::{debug, info, warn, Level};
 use types::*;
 use xbpf::libbpf::{
-    self as libbpf_rs, Link, MapCore, MapFlags, MapHandle, MapType,
+    self as libbpf_rs,
     skel::{OpenSkel, Skel, SkelBuilder},
+    Link, MapCore, MapFlags, MapHandle, MapType,
 };
 
 xbpf::include_bpf!("fast_path");
@@ -231,7 +232,7 @@ impl<'obj> FastPath<'obj> {
 
         let h1 = h1::Parser::new()
             .match_h2_preface()
-            .capture_hdr(&beeline::header::PATH)
+            .capture_hdr(&beeps::header::PATH)
             .capture_hdr(&http::header::CONTENT_LENGTH)
             .replace_parse_msg("parse_h1")
             .replace_extract("extract_h1_match")
@@ -239,7 +240,7 @@ impl<'obj> FastPath<'obj> {
             .attach(prog_fd)?;
 
         let h2 = h2::Parser::new()
-            .capture_hdr(&beeline::header::PATH)?
+            .capture_hdr(&beeps::header::PATH)?
             .capture_hdr(&http::header::CONTENT_LENGTH)?
             .replace_parse_msg("parse_h2")
             .replace_extract("extract_h2_match")

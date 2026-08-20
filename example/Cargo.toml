@@ -11,14 +11,14 @@ keywords.workspace = true
 [dependencies]
 axum = { version = "0.8.9", features = ["http2"] }
 clap = { version = "4", features = ["derive"] }
-# h2 is patched to allow beeline to modify the dynamic table
+# h2 is patched to allow beeps to modify the dynamic table
 h2 = "0.4.16"
 http = "1.5"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 bytes = "1"
-beeline = { path = "../beeline", features = ["h1", "h2"] }
+beeps = { path = "../beeps", features = ["h1", "h2"] }
 tokio = { version = "1.53", features = ["full"] }
 httlib-huffman = "0.3.4"
 tracing = "0.1.44"
@@ -32,7 +32,7 @@ xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map" }
 
 [build-dependencies]
 xbpf = { git = "https://github.com/lbrndnr/ebpf.git", branch = "map", features = ["build"] }
-beeline = { path = "../beeline", features = ["build"] }
+beeps = { path = "../beeps", features = ["build"] }
 
 [dev-dependencies]
 anyhow = "1.0.104"

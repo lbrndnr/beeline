@@ -7,13 +7,13 @@
 //! user space.
 //!
 //! The target program declares the functions it wants Beeline to provide with
-//! the `BEELINE_*` macros of `beeline.h` and then names them in the [`h1`] or
+//! the `BEEPS_*` macros of `beeps.h` and then names them in the [`h1`] or
 //! [`h2`] builder:
 //!
 //! ```no_run
 //! # fn main() -> anyhow::Result<()> {
 //! # let prog_fd = 0;
-//! use beeline::{h1, header::PATH};
+//! use beeps::{h1, header::PATH};
 //!
 //! let parser = h1::Parser::new()
 //!     .capture_hdr(&PATH)
